@@ -189,7 +189,7 @@ export const BarcodeManager: React.FC = () => {
   } = useERP();
 
   // 1. Two Primary Views: 'batch_grn' | 'single_sku'
-  const [activeView, setActiveView] = useState<'batch_grn' | 'single_sku'>('batch_grn');
+  const [activeView, setActiveView] = useState<'batch_grn' | 'single_sku'>('single_sku');
 
   // Single SKU Generator State
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(products[0] || null);
