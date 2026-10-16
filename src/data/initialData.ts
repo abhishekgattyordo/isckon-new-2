@@ -691,6 +691,36 @@ export const INITIAL_PRODUCTS: Product[] = [
 ];
 
 export const INITIAL_INWARD_NOTES: MaterialInwardNote[] = [
+  // SAMPLE DRAFT GRN
+  {
+    id: 'inward-draft-01',
+    grnNumber: 'GRN-DRAFT-2026-1042',
+    poNumber: 'PO-DRAFT-8849',
+    vendorName: 'Bhaktivedanta Book Trust (BBT)',
+    invoiceDate: '2026-04-12',
+    warehouse: 'Zone A — Main Retail Floor',
+    branchId: 'branch-mayapur-hq',
+    branchName: 'Mayapur HQ Central',
+    status: 'draft',
+    totalValue: 9500,
+    receivedBy: 'Sri Rama Das',
+    timestamp: '2026-04-12T09:15:00Z',
+    notes: 'Draft shipment entry: cartons received at loading bay, awaiting count audit.',
+    items: [
+      {
+        id: 'inw-item-draft-1',
+        sku: 'BK-BG-AS-IS-01',
+        name: 'Bhagavad-gita As It Is (Deluxe English)',
+        quantity: 50,
+        unitCost: 190,
+        sellingPrice: 350,
+        batchNo: 'BAT-2026-DRAFT01',
+        expiryDate: '2036-12-31',
+        taxRate: 0,
+        total: 9500
+      }
+    ]
+  },
   // BANGALORE GRN
   {
     id: 'inward-blr-01',

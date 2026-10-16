@@ -58,7 +58,9 @@ interface ERPContextType {
   updateProduct: (id: string, updates: Partial<Product>) => void;
   deleteProduct: (id: string) => void;
   inwardNotes: MaterialInwardNote[];
-  addInwardNote: (note: Omit<MaterialInwardNote, 'id'>) => void;
+  addInwardNote: (note: Omit<MaterialInwardNote, 'id'>) => Promise<void> | void;
+  updateInwardNote: (id: string, updates: Partial<MaterialInwardNote>) => Promise<void>;
+  deleteInwardNote: (id: string) => Promise<void>;
   suppliers: Supplier[];
   setSuppliers: React.Dispatch<React.SetStateAction<Supplier[]>>;
   addSupplier: (supplier: Omit<Supplier, 'id' | 'createdAt' | 'code'> & { id?: string; code?: string }) => Supplier;
@@ -1212,8 +1214,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     const consolidatedItems = Array.from(consolidatedMap.values());
 
+    const isDraft = noteData.status === 'draft';
+
     const newNote: MaterialInwardNote = {
       ...noteData,
+      status: isDraft ? 'draft' : (noteData.status || 'completed'),
       items: consolidatedItems,
       id: `min-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       branchId: noteData.branchId || currentBranch?.id || 'branch-mayapur-hq',
@@ -1233,13 +1238,27 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!response.ok) {
         throw new Error('Failed to save GRN to server');
       }
-      quickNotification('GRN Saved', 'Document successfully saved to server.', 'success');
+      if (isDraft) {
+        quickNotification('GRN Saved as Draft', `Draft ${newNote.grnNumber} saved. Inventory stock remains unchanged until finalized.`, 'info');
+      } else {
+        quickNotification('GRN Saved', 'Document successfully saved to server.', 'success');
+      }
     } catch (e) {
       console.error('Could not post inward note:', e);
-      quickNotification('Sync Error', 'Failed to save GRN to server. Data might be lost on refresh.', 'alert');
+      quickNotification('Sync Warning', 'Saved locally, failed to sync with server.', 'alert');
     }
 
-    // 2. Adjust inventory stock levels for existing products or register new product in catalog
+    if (isDraft) {
+      logActivity(
+        'Saved Material Inward Draft',
+        'inward',
+        newNote.grnNumber,
+        `Draft GRN created by ${user.name} for vendor "${newNote.vendorName || 'Draft'}" with ${consolidatedItems.length} items.`
+      );
+      return;
+    }
+
+    // 2. Adjust inventory stock levels for existing products or register new product in catalog (Completed GRNs only)
     consolidatedItems.forEach(item => {
       setProducts(prev => {
         const exists = prev.some(p => (p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase());
@@ -1365,6 +1384,121 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     quickNotification('GRN Created Successfully', `Document ${newNote.grnNumber} processed for branch ${newNote.branchName}.`, 'success');
+  };
+
+  const updateInwardNote = async (id: string, updates: Partial<MaterialInwardNote>) => {
+    let wasDraft = false;
+    let targetNote: MaterialInwardNote | undefined;
+
+    setInwardNotes(prev => prev.map(n => {
+      if (n.id === id) {
+        targetNote = n;
+        wasDraft = n.status === 'draft';
+        return {
+          ...n,
+          ...updates,
+          lastUpdatedBy: user.name
+        };
+      }
+      return n;
+    }));
+
+    try {
+      await fetch('/api/inward', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...updates, lastUpdatedBy: user.name })
+      });
+    } catch (e) {
+      console.error('Could not update inward note:', e);
+    }
+
+    // If finalizing a draft to 'completed', apply stock, batches, and movements
+    if (wasDraft && updates.status === 'completed') {
+      const itemsToProcess = updates.items || targetNote?.items || [];
+      const grnNum = updates.grnNumber || targetNote?.grnNumber || 'GRN-2026';
+      const whZone = updates.warehouse || targetNote?.warehouse || 'Zone A — Main Retail Floor';
+      const vendor = updates.vendorName || targetNote?.vendorName || 'Supplier';
+
+      itemsToProcess.forEach(item => {
+        setProducts(prev => {
+          const exists = prev.some(p => (p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase());
+          if (exists) {
+            return prev.map(p => {
+              if ((p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase()) {
+                const newStock = p.stock + item.quantity;
+                return {
+                  ...p,
+                  stock: newStock,
+                  cost: item.unitCost > 0 ? item.unitCost : p.cost,
+                  price: item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : p.price,
+                  batchNo: item.batchNo || p.batchNo,
+                  status: newStock <= p.minStock ? 'low_stock' : 'in_stock',
+                  lastUpdated: new Date().toISOString()
+                };
+              }
+              return p;
+            });
+          }
+          return prev;
+        });
+
+        // Add inventory batch
+        const newBatch: InventoryBatch = {
+          id: `bat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          sku: item.sku,
+          batchNo: item.batchNo || `BAT-2026-${Math.floor(100 + Math.random() * 900)}`,
+          receivedDate: updates.invoiceDate || new Date().toISOString().slice(0, 10),
+          costPrice: item.unitCost,
+          sellingPrice: item.sellingPrice || (item.unitCost * 1.5),
+          totalQuantity: item.quantity,
+          remainingQuantity: item.quantity,
+          status: 'in_stock',
+          grnNumber: grnNum
+        };
+        setBatches(prev => [newBatch, ...prev]);
+
+        // Add movement
+        const mov: StockMovement = {
+          id: `mov-${Date.now()}-${Math.random()}`,
+          type: 'inward_grn',
+          sku: item.sku,
+          productName: item.name,
+          qtyDelta: item.quantity,
+          toZone: whZone,
+          branchId: targetNote?.branchId || currentBranch?.id || 'branch-mayapur-hq',
+          branchName: targetNote?.branchName || currentBranch?.name || 'Mayapur HQ Central',
+          timestamp: new Date().toISOString(),
+          operator: user.name,
+          referenceNo: grnNum,
+          batchNo: item.batchNo || undefined
+        };
+        setMovements(m => [mov, ...m]);
+      });
+
+      logActivity(
+        'Finalized Material Inward (GRN)',
+        'inward',
+        grnNum,
+        `Draft GRN ${grnNum} finalized and committed by ${user.name} for vendor "${vendor}".`
+      );
+
+      quickNotification('GRN Finalized & Committed', `Draft ${grnNum} successfully committed to inventory.`, 'success');
+    } else {
+      quickNotification('Draft Updated', 'Changes saved to draft.', 'info');
+    }
+  };
+
+  const deleteInwardNote = async (id: string) => {
+    setInwardNotes(prev => prev.filter(n => n.id !== id));
+    try {
+      await fetch(`/api/inward?id=${encodeURIComponent(id)}&deletedBy=${encodeURIComponent(user.name)}`, {
+        method: 'DELETE'
+      });
+      quickNotification('Draft Discarded', 'GRN draft has been removed.', 'info');
+    } catch (e) {
+      console.error('Could not delete inward note:', e);
+    }
   };
 
   const addSupplier = (supplierData: Omit<Supplier, 'id' | 'createdAt' | 'code'> & { id?: string; code?: string }): Supplier => {
@@ -2314,6 +2448,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteProduct,
         inwardNotes,
         addInwardNote,
+        updateInwardNote,
+        deleteInwardNote,
         suppliers,
         setSuppliers,
         addSupplier,

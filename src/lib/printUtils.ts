@@ -1,7 +1,7 @@
 'use client';
 
 import JsBarcode from 'jsbarcode';
-import { Product } from '@/types';
+import { Product, MaterialInwardNote } from '@/types';
 
 /**
  * Generates an SVG string representation of a barcode for reliable printing
@@ -72,164 +72,111 @@ export function generateBarcodeSvgString(
 export function printHtmlDocument(htmlContent: string, title: string = 'Print Document') {
   if (typeof window === 'undefined') return;
 
-  // Clean up any previously existing print iframes
-  const existingFrame = document.getElementById('aura-print-iframe');
-  if (existingFrame) {
-    existingFrame.remove();
+  // Remove any existing print modal
+  const existingModal = document.getElementById('aura-print-preview-modal');
+  if (existingModal) {
+    existingModal.remove();
   }
 
-  const iframe = document.createElement('iframe');
-  iframe.id = 'aura-print-iframe';
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0px';
-  iframe.style.height = '0px';
-  iframe.style.border = '0';
-  iframe.style.opacity = '0';
-  iframe.style.pointerEvents = 'none';
+  // Create print preview modal overlay
+  const modal = document.createElement('div');
+  modal.id = 'aura-print-preview-modal';
+  modal.style.position = 'fixed';
+  modal.style.inset = '0';
+  modal.style.zIndex = '999999';
+  modal.style.background = 'rgba(15, 23, 42, 0.75)';
+  modal.style.backdropFilter = 'blur(4px)';
+  modal.style.display = 'flex';
+  modal.style.flexDirection = 'column';
+  modal.style.alignItems = 'center';
+  modal.style.justifyContent = 'center';
+  modal.style.padding = '20px';
 
-  document.body.appendChild(iframe);
-
-  const doc = iframe.contentWindow?.document || iframe.contentDocument;
-  if (!doc) {
-    // Fallback: standard window.print if iframe creation is blocked
-    window.print();
-    return;
-  }
-
-  doc.open();
-  doc.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>${title}</title>
-        <style>
-          @page {
-            size: auto;
-            margin: 4mm;
-          }
-          * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, monospace;
-            background: #ffffff !important;
-            color: #000000 !important;
-            padding: 4mm;
-          }
-          .grid-labels {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-            max-width: 800px;
-            margin: 0 auto;
-          }
-          .grid-shelf {
-            grid-template-columns: repeat(2, 1fr);
-            gap: 16px;
-          }
-          .grid-jewel {
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
-          }
-          .label-card {
-            border: 1.5px solid #000000;
-            border-radius: 6px;
-            padding: 10px;
-            background: #ffffff;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            page-break-inside: avoid;
-            break-inside: avoid;
-            min-height: 140px;
-          }
-          .shelf-card {
-            min-height: 220px;
-            border-width: 2px;
-            padding: 14px;
-          }
-          .jewel-card {
-            min-height: 85px;
-            padding: 6px;
-            font-size: 8px;
-          }
-          .label-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 11px;
-            font-weight: 700;
-            font-family: monospace;
-            border-bottom: 1px solid #e2e8f0;
-            padding-bottom: 4px;
-            margin-bottom: 6px;
-          }
-          .label-title {
-            font-size: 12px;
-            font-weight: 700;
-            color: #000000;
-            margin-bottom: 6px;
-            line-height: 1.25;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-          }
-          .label-barcode-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 4px 0;
-          }
-          .label-barcode-container svg {
-            max-width: 100%;
-            height: auto;
-            display: block;
-          }
-          .label-footer {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 9px;
-            font-family: monospace;
-            border-top: 1px solid #e2e8f0;
-            padding-top: 4px;
-            margin-top: 6px;
-          }
-          .page-break {
-            page-break-after: always;
-            break-after: page;
-          }
-        </style>
-      </head>
-      <body>
+  modal.innerHTML = `
+    <div style="background: #ffffff; width: 100%; max-width: 750px; height: 90vh; border-radius: 20px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); display: flex; flex-direction: column; overflow: hidden; font-family: sans-serif;">
+      <div style="padding: 16px 24px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 14px; font-weight: bold; color: #0f172a; font-family: monospace;">🖨️ ${title}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <button id="aura-do-print-btn" style="background: #d97706; color: white; border: none; padding: 8px 18px; border-radius: 10px; font-weight: bold; font-size: 12px; cursor: pointer; font-family: monospace; display: flex; align-items: center; gap: 6px;">
+              🖨️ Print Now
+            </button>
+            <button id="aura-close-print-btn" style="background: #e2e8f0; color: #334155; border: none; padding: 8px 14px; border-radius: 10px; font-weight: bold; font-size: 12px; cursor: pointer; font-family: monospace;">
+              ✕ Close
+            </button>
+          </div>
+        </div>
+        <div id="aura-print-notice" style="display: none; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; font-size: 11px; padding: 6px 12px; border-radius: 8px; font-family: monospace;">
+          ℹ️ If your browser blocks popups in the preview sandbox, the official receipt PDF has also been automatically downloaded to your device!
+        </div>
+      </div>
+      <div id="aura-print-body" style="flex: 1; overflow-y: auto; padding: 30px; background: #ffffff;">
         ${htmlContent}
-      </body>
-    </html>
-  `);
-  doc.close();
+      </div>
+    </div>
+  `;
 
-  // Give the browser iframe a moment to layout and parse fonts/SVGs, then print
-  setTimeout(() => {
-    try {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-    } catch (e) {
-      console.warn('Iframe print error, falling back to window.print():', e);
-      window.print();
-    } finally {
-      setTimeout(() => {
-        iframe.remove();
-      }, 2000);
+  document.body.appendChild(modal);
+
+  // Add print style tag
+  const styleTag = document.createElement('style');
+  styleTag.id = 'aura-print-style';
+  styleTag.innerHTML = `
+    @media print {
+      body * {
+        visibility: hidden !important;
+      }
+      #aura-print-preview-modal, #aura-print-preview-modal * {
+        visibility: visible !important;
+      }
+      #aura-print-preview-modal {
+        position: fixed !important;
+        inset: 0 !important;
+        background: #ffffff !important;
+        padding: 0 !important;
+        backdrop-filter: none !important;
+      }
+      #aura-print-preview-modal > div {
+        max-width: 100% !important;
+        height: 100% !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+      }
+      #aura-print-preview-modal div:first-child {
+        display: none !important;
+      }
+      #aura-print-body {
+        padding: 0 !important;
+        overflow: visible !important;
+      }
     }
-  }, 250);
+  `;
+  document.head.appendChild(styleTag);
+
+  const removeModal = () => {
+    modal.remove();
+    const st = document.getElementById('aura-print-style');
+    if (st) st.remove();
+  };
+
+  modal.querySelector('#aura-close-print-btn')?.addEventListener('click', removeModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) removeModal();
+  });
+
+  modal.querySelector('#aura-do-print-btn')?.addEventListener('click', () => {
+    try {
+      window.print();
+    } catch (err) {
+      console.warn('Browser print blocked or unsupported in sandbox:', err);
+      const notice = modal.querySelector('#aura-print-notice');
+      if (notice) {
+        (notice as HTMLElement).style.display = 'block';
+      }
+    }
+  });
 }
 
 /**
@@ -349,4 +296,68 @@ export function buildBarcodeRecordsLabelsHtml(
 
   return `<div class="grid-labels ${templateStyle === 'jewel' ? 'grid-jewel' : templateStyle === 'shelf' ? 'grid-shelf' : ''}">${cardsHtml}</div>`;
 }
+
+/**
+ * Builds HTML for printing a formal Material Inward Note (GRN) receipt/voucher
+ */
+export function buildGrnReceiptHtml(note: MaterialInwardNote): string {
+  const itemsHtml = (note.items || []).map((item, idx) => `
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd; font-family: monospace;">${idx + 1}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd; font-family: monospace;"><strong>${item.sku}</strong><br/>${item.name}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center; font-family: monospace;">${item.quantity}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right; font-family: monospace;">₹${Number(item.unitCost).toFixed(2)}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right; font-family: monospace; font-weight: bold;">₹${Number(item.total).toFixed(2)}</td>
+    </tr>
+  `).join('');
+
+  return `
+    <div style="max-width: 700px; margin: 0 auto; padding: 20px; font-family: sans-serif; color: #000; background: #fff;">
+      <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 20px;">
+        <h2 style="margin: 0; font-size: 20px; font-weight: bold; text-transform: uppercase;">ISKCON RETAIL ERP</h2>
+        <p style="margin: 4px 0 0; font-size: 12px; font-family: monospace;">GOODS RECEIVED NOTE (GRN) / INWARD VOUCHER</p>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 12px; font-family: monospace;">
+        <div>
+          <p><strong>GRN Number:</strong> ${note.grnNumber}</p>
+          <p><strong>PO Number:</strong> ${note.poNumber}</p>
+          <p><strong>Vendor:</strong> ${note.vendorName}</p>
+        </div>
+        <div style="text-align: right;">
+          <p><strong>Invoice Date:</strong> ${note.invoiceDate}</p>
+          <p><strong>Warehouse Zone:</strong> ${note.warehouse}</p>
+          <p><strong>Received By:</strong> ${note.receivedBy || 'Staff'}</p>
+        </div>
+      </div>
+
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px;">
+        <thead>
+          <tr style="background: #f1f5f9; border-bottom: 2px solid #000;">
+            <th style="padding: 8px; text-align: left; font-family: monospace;">#</th>
+            <th style="padding: 8px; text-align: left; font-family: monospace;">SKU & Description</th>
+            <th style="padding: 8px; text-align: center; font-family: monospace;">Qty</th>
+            <th style="padding: 8px; text-align: right; font-family: monospace;">Unit Cost</th>
+            <th style="padding: 8px; text-align: right; font-family: monospace;">Total (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHtml}
+        </tbody>
+      </table>
+
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 30px; font-size: 14px; font-family: monospace;">
+        <div style="text-align: right; border-top: 2px solid #000; padding-top: 10px; width: 250px;">
+          <strong>Total Valuation: ₹${Number(note.totalValue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; margin-top: 50px; font-size: 11px; font-family: monospace; border-top: 1px dashed #666; padding-top: 15px;">
+        <div>Store Keeper Signature: ______________________</div>
+        <div>Authorized Signatory: ______________________</div>
+      </div>
+    </div>
+  `;
+}
+
 

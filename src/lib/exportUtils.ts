@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import JsBarcode from 'jsbarcode';
+import { MaterialInwardNote } from '@/types';
 
 export interface EventExportData {
   event: {
@@ -924,4 +925,118 @@ export function exportBarcodesToPdf(
   const cleanFilename = (options?.filename || `Barcode_Labels_${new Date().toISOString().slice(0, 10)}.pdf`).replace(/[^a-zA-Z0-9_.-]/g, '_');
   doc.save(cleanFilename);
 }
+
+/**
+ * Export Material Inward Note (GRN) as an official PDF voucher
+ */
+export function exportGrnToPdf(note: MaterialInwardNote) {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4'
+  });
+
+  const darkSlate = [15, 23, 42];
+
+  // Header Banner
+  doc.setFillColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+  doc.rect(0, 0, 210, 26, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ISKCON RETAIL ERP', 14, 11);
+
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(245, 158, 11);
+  doc.text('GOODS RECEIVED NOTE (GRN) / INWARD VOUCHER', 14, 18);
+
+  doc.setFontSize(8);
+  doc.setTextColor(203, 213, 225);
+  doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, 140, 18);
+
+  // Meta Information Box
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(14, 32, 182, 30, 2, 2, 'FD');
+
+  doc.setFontSize(11);
+  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`GRN: ${note.grnNumber}`, 18, 40);
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Supplier: ${note.vendorName}`, 18, 47);
+  doc.text(`PO Number: ${note.poNumber}`, 18, 54);
+
+  doc.text(`Invoice Date: ${note.invoiceDate}`, 115, 40);
+  doc.text(`Warehouse Zone: ${note.warehouse}`, 115, 47);
+  doc.text(`Received By: ${note.receivedBy || 'Staff'}`, 115, 54);
+
+  // Table Data
+  const tableRows = (note.items || []).map((item, idx) => [
+    (idx + 1).toString(),
+    item.sku,
+    item.name,
+    item.quantity.toString(),
+    `₹ ${Number(item.unitCost).toFixed(2)}`,
+    `₹ ${Number(item.total).toFixed(2)}`
+  ]);
+
+  autoTable(doc, {
+    startY: 68,
+    head: [['#', 'SKU', 'Description', 'Qty', 'Unit Cost', 'Total Amount']],
+    body: tableRows,
+    theme: 'grid',
+    styles: {
+      fontSize: 8.5,
+      cellPadding: 3,
+      textColor: [30, 41, 59]
+    },
+    headStyles: {
+      fillColor: [30, 41, 59],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold'
+    },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 32, fontStyle: 'bold' },
+      2: { cellWidth: 70 },
+      3: { cellWidth: 18, halign: 'center' },
+      4: { cellWidth: 26, halign: 'right' },
+      5: { cellWidth: 26, halign: 'right', fontStyle: 'bold' }
+    }
+  });
+
+  const finalY = (doc as any).lastAutoTable?.finalY || 150;
+
+  // Total Summary Row
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(120, finalY + 6, 76, 12, 1, 1, 'F');
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(
+    `Total Valuation: ₹ ${Number(note.totalValue || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    124,
+    finalY + 14
+  );
+
+  // Signatures
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.line(18, finalY + 45, 75, finalY + 45);
+  doc.text('Store Executive Signature', 18, finalY + 50);
+
+  doc.line(135, finalY + 45, 192, finalY + 45);
+  doc.text('Authorized Receiver Signature', 135, finalY + 50);
+
+  const cleanFilename = `${note.grnNumber.replace(/[^a-zA-Z0-9_-]/g, '_')}_Receipt.pdf`;
+  doc.save(cleanFilename);
+}
+
 

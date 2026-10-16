@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getInwardNotes, createInwardNote, softDeleteInwardNoteService, permanentDeleteInwardNoteService, restoreInwardNoteService } from '@/lib/services/inwardService';
+import { getInwardNotes, createInwardNote, updateInwardNoteService, softDeleteInwardNoteService, permanentDeleteInwardNoteService, restoreInwardNoteService } from '@/lib/services/inwardService';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +26,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, inwardNote }, { status: 201 });
   } catch (error: any) {
     return NextResponse.json({ success: true, error: error?.message }, { status: 200 });
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    if (!body.id) {
+      return NextResponse.json({ success: false, error: 'Inward Note ID is required' }, { status: 400 });
+    }
+    const inwardNote = await updateInwardNoteService(body.id, body);
+    return NextResponse.json({ success: true, inwardNote });
+  } catch (error: any) {
+    return NextResponse.json({ success: false, error: error?.message }, { status: 500 });
   }
 }
 

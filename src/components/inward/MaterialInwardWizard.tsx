@@ -28,13 +28,30 @@ import {
   Package,
   Layers,
   Download,
-  Copy
+  Copy,
+  FileEdit,
+  Save,
+  Bookmark
 } from 'lucide-react';
-import { printHtmlDocument, buildProductLabelsHtml } from '../../lib/printUtils';
-import { exportBarcodesToPdf } from '../../lib/exportUtils';
+import { printHtmlDocument, buildProductLabelsHtml, buildGrnReceiptHtml } from '../../lib/printUtils';
+import { exportBarcodesToPdf, exportGrnToPdf } from '../../lib/exportUtils';
 
 export const MaterialInwardWizard: React.FC = () => {
-  const { products, zones, inwardNotes, addInwardNote, user, setActiveModule, quickNotification, currentBranch, settings, suppliers, addSupplier } = useERP();
+  const {
+    products,
+    zones,
+    inwardNotes,
+    addInwardNote,
+    updateInwardNote,
+    deleteInwardNote,
+    user,
+    setActiveModule,
+    quickNotification,
+    currentBranch,
+    settings,
+    suppliers,
+    addSupplier
+  } = useERP();
   
   // List-First Page View State
   const [viewMode, setViewMode] = useState<'list' | 'create'>('list');
@@ -47,6 +64,10 @@ export const MaterialInwardWizard: React.FC = () => {
 
   // Selected GRN for viewing details
   const [viewingGrn, setViewingGrn] = useState<MaterialInwardNote | null>(null);
+
+  // Draft Editing State
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [editingDraftGrnNumber, setEditingDraftGrnNumber] = useState<string>('');
 
   // Wizard Creation States
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
@@ -99,11 +120,70 @@ export const MaterialInwardWizard: React.FC = () => {
 
   // Overall stats for top bento cards
   const totalGrnsCount = inwardNotes.length;
+  const totalDraftsCount = inwardNotes.filter(n => n.status === 'draft').length;
   const totalInwardValuation = inwardNotes.reduce((sum, n) => sum + Number(n.totalValue || 0), 0);
   const totalUnitsStocked = inwardNotes.reduce((sum, n) => sum + (n.items?.reduce((s, i) => s + Number(i.quantity), 0) || 0), 0);
   const uniqueVendorsCount = new Set(inwardNotes.map(n => n.vendorName)).size;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Handle Save as Draft
+  const handleSaveDraft = async () => {
+    if (isSubmitting) return;
+    if (!vendorName.trim() && !poNumber.trim() && items.length === 0) {
+      quickNotification('Empty Draft', 'Please enter at least a supplier name, PO number, or an item row to save as draft.', 'alert');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const draftGrnNo = editingDraftGrnNumber || `GRN-DRAFT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+      const draftPayload = {
+        grnNumber: draftGrnNo,
+        poNumber: poNumber.trim() || `PO-DRAFT-${Math.floor(100 + Math.random() * 900)}`,
+        vendorName: vendorName.trim() || 'Draft Supplier',
+        invoiceDate: invoiceDate || new Date().toISOString().slice(0, 10),
+        warehouse: selectedZone || zones[0]?.name || 'Zone A — Main Retail Floor',
+        branchId: currentBranch?.id || 'branch-mayapur-hq',
+        branchName: currentBranch?.name || 'Mayapur HQ Central',
+        items: items,
+        status: 'draft' as const,
+        totalValue: totalGrnValue,
+        receivedBy: user?.name || 'Store Operator',
+        timestamp: new Date().toISOString(),
+        notes: grnNotes
+      };
+
+      if (editingDraftId) {
+        await updateInwardNote(editingDraftId, draftPayload);
+      } else {
+        await addInwardNote(draftPayload);
+      }
+
+      setEditingDraftId(null);
+      setEditingDraftGrnNumber('');
+      setViewMode('list');
+      setStep(1);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Handle Resume Existing Draft
+  const handleResumeDraft = (note: MaterialInwardNote) => {
+    setEditingDraftId(note.id);
+    setEditingDraftGrnNumber(note.grnNumber);
+    setVendorName(note.vendorName || '');
+    setPoNumber(note.poNumber || '');
+    setInvoiceDate(note.invoiceDate || new Date().toISOString().slice(0, 10));
+    setSelectedZone(note.warehouse || zones[0]?.name || 'Zone A — Main Retail Floor');
+    setGrnNotes(note.notes || '');
+    setItems(note.items || []);
+    setStep(note.items && note.items.length > 0 ? 2 : 1);
+    setViewMode('create');
+    setViewingGrn(null);
+    quickNotification('Draft Resumed', `Resumed draft voucher ${note.grnNumber} for editing.`, 'info');
+  };
 
   const handleCompleteGrn = async () => {
     if (isSubmitting) return;
@@ -125,7 +205,7 @@ export const MaterialInwardWizard: React.FC = () => {
       const grnNo = `GRN-${currentBranch?.code || 'HQ'}-2026-${Math.floor(1000 + Math.random() * 9000)}`;
       setGeneratedGrnNumber(grnNo);
 
-      await addInwardNote({
+      const finalPayload = {
         grnNumber: grnNo,
         poNumber: poNumber.trim(),
         vendorName: vendorName.trim(),
@@ -134,12 +214,20 @@ export const MaterialInwardWizard: React.FC = () => {
         branchId: currentBranch?.id || 'branch-mayapur-hq',
         branchName: currentBranch?.name || 'Mayapur HQ Central',
         items: items,
-        status: 'completed',
+        status: 'completed' as const,
         totalValue: totalGrnValue,
         receivedBy: user?.name || 'Store Operator',
         timestamp: new Date().toISOString(),
         notes: grnNotes
-      });
+      };
+
+      if (editingDraftId) {
+        await updateInwardNote(editingDraftId, finalPayload);
+        setEditingDraftId(null);
+        setEditingDraftGrnNumber('');
+      } else {
+        await addInwardNote(finalPayload);
+      }
 
       if (autoPrintLabels) {
         quickNotification('Barcode Stickers Sent to Printer', `Dispatched ${totalUnits} serialized tags to terminal printer.`, 'info');
@@ -175,28 +263,68 @@ export const MaterialInwardWizard: React.FC = () => {
         </div>
 
         {viewMode === 'list' ? (
-          <button
-            onClick={() => {
-              setStep(1);
-              setVendorName('');
-              setPoNumber('');
-              setGrnNotes('');
-              setItems([]);
-              setViewMode('create');
-            }}
-            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-[#D97706] hover:bg-[#b45309] text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer font-mono shrink-0"
-          >
-            <Plus className="w-4 h-4" />
-            <span>+ ADD NEW GRN</span>
-          </button>
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            {totalDraftsCount > 0 && (
+              <button
+                onClick={() => setStatusFilter(statusFilter === 'draft' ? 'all' : 'draft')}
+                className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer font-mono ${
+                  statusFilter === 'draft'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30'
+                }`}
+                title="Filter by Draft vouchers"
+              >
+                <FileEdit className="w-4 h-4" />
+                <span>{totalDraftsCount} DRAFT{totalDraftsCount > 1 ? 'S' : ''}</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setEditingDraftId(null);
+                setEditingDraftGrnNumber('');
+                setStep(1);
+                setVendorName('');
+                setPoNumber('');
+                setGrnNotes('');
+                setItems([]);
+                setViewMode('create');
+              }}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-[#D97706] hover:bg-[#b45309] text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer font-mono shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ ADD NEW GRN</span>
+            </button>
+          </div>
         ) : (
-          <button
-            onClick={() => setViewMode('list')}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs transition-colors font-mono cursor-pointer shrink-0"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>&larr; BACK TO GRN LIST</span>
-          </button>
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            {editingDraftId && (
+              <span className="px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-300 font-mono text-xs font-bold flex items-center gap-1.5">
+                <FileEdit className="w-3.5 h-3.5" />
+                <span>DRAFT: {editingDraftGrnNumber}</span>
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={isSubmitting}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-800 dark:text-amber-300 font-bold text-xs transition-colors font-mono cursor-pointer shrink-0"
+              title="Save current progress as a draft inward voucher"
+            >
+              <Save className="w-4 h-4" />
+              <span>{editingDraftId ? 'UPDATE DRAFT' : 'SAVE AS DRAFT'}</span>
+            </button>
+            <button
+              onClick={() => {
+                setEditingDraftId(null);
+                setEditingDraftGrnNumber('');
+                setViewMode('list');
+              }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs transition-colors font-mono cursor-pointer shrink-0"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>&larr; BACK TO LIST</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -210,10 +338,15 @@ export const MaterialInwardWizard: React.FC = () => {
                 <span className="text-[11px] font-bold uppercase tracking-widest font-mono">Total GRNs</span>
                 <FileSpreadsheet className="w-4 h-4 text-amber-500" />
               </div>
-              <div className="mt-3">
+              <div className="mt-3 flex items-baseline justify-between gap-2">
                 <span className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white">
                   {totalGrnsCount} <span className="text-xs text-slate-400 font-normal">vouchers</span>
                 </span>
+                {totalDraftsCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold font-mono">
+                    {totalDraftsCount} drafts
+                  </span>
+                )}
               </div>
             </div>
 
@@ -355,9 +488,16 @@ export const MaterialInwardWizard: React.FC = () => {
                                 <Copy className="w-3.5 h-3.5" />
                               </button>
                             </div>
-                            <span className="inline-block mt-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[9px] font-bold">
-                              {note.status.toUpperCase()}
-                            </span>
+                            {note.status === 'draft' ? (
+                              <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold border border-amber-500/30">
+                                <FileEdit className="w-2.5 h-2.5" />
+                                DRAFT
+                              </span>
+                            ) : (
+                              <span className="inline-block mt-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[9px] font-bold">
+                                {note.status.toUpperCase()}
+                              </span>
+                            )}
                           </td>
 
                           <td className="py-4 px-4">
@@ -388,6 +528,16 @@ export const MaterialInwardWizard: React.FC = () => {
 
                           <td className="py-4 px-5 text-right">
                             <div className="flex items-center justify-end gap-2">
+                              {note.status === 'draft' && (
+                                <button
+                                  onClick={() => handleResumeDraft(note)}
+                                  title="Resume & Edit Draft GRN"
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-800 dark:text-amber-300 transition-colors cursor-pointer text-xs font-bold font-mono"
+                                >
+                                  <FileEdit className="w-3.5 h-3.5" />
+                                  <span>Resume</span>
+                                </button>
+                              )}
                               <button
                                 onClick={() => setViewingGrn(note)}
                                 title="View Details"
@@ -395,33 +545,36 @@ export const MaterialInwardWizard: React.FC = () => {
                               >
                                 <Eye className="w-4 h-4" />
                               </button>
-                              <button
-                                onClick={() => {
-                                  if (typeof window !== 'undefined') {
-                                    sessionStorage.setItem('active_grn_filter', note.grnNumber);
-                                  }
-                                  setActiveModule('barcode');
-                                }}
-                                title="Manage & Print Barcodes for this GRN"
-                                className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 transition-colors cursor-pointer"
-                              >
-                                <BarcodeIcon className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  const html = buildProductLabelsHtml(
-                                    { sku: note.items?.[0]?.sku || 'SKU', name: note.items?.[0]?.name || 'Item', price: note.items?.[0]?.sellingPrice || 100 } as any,
-                                    note.items?.[0]?.quantity || 1,
-                                    note.vendorName,
-                                    note.grnNumber
-                                  );
-                                  printHtmlDocument(html, note.grnNumber);
-                                }}
-                                title="Quick Print Labels"
-                                className="p-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 transition-colors cursor-pointer"
-                              >
-                                <Printer className="w-4 h-4" />
-                              </button>
+                              {note.status === 'draft' ? (
+                                <button
+                                  onClick={() => {
+                                    if (confirm(`Discard draft voucher ${note.grnNumber}?`)) {
+                                      deleteInwardNote(note.id);
+                                    }
+                                  }}
+                                  title="Discard Draft"
+                                  className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    try {
+                                      exportGrnToPdf(note);
+                                      quickNotification('GRN PDF Saved', `Voucher saved for ${note.grnNumber}`, 'success');
+                                    } catch (e) {
+                                      console.warn('PDF export error:', e);
+                                    }
+                                    const html = buildGrnReceiptHtml(note);
+                                    printHtmlDocument(html, note.grnNumber);
+                                  }}
+                                  title="Print / Download GRN Voucher"
+                                  className="p-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 transition-colors cursor-pointer"
+                                >
+                                  <Printer className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -812,20 +965,30 @@ export const MaterialInwardWizard: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between font-mono gap-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleSaveDraft}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-800 dark:text-amber-300 font-bold text-xs transition-colors cursor-pointer"
+                  title="Save current details as draft"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{editingDraftId ? 'UPDATE DRAFT' : 'SAVE AS DRAFT'}</span>
+                </button>
                 <button
                   onClick={() => {
                     if (!vendorName.trim()) {
-                      quickNotification('Validation Error', 'Supplier / Vendor Name is mandatory.', 'alert');
+                      quickNotification('Validation Error', 'Supplier / Vendor Name is mandatory to proceed.', 'alert');
                       return;
                     }
                     if (!poNumber.trim()) {
-                      quickNotification('Validation Error', 'Purchase Order (PO) Number is mandatory.', 'alert');
+                      quickNotification('Validation Error', 'Purchase Order (PO) Number is mandatory to proceed.', 'alert');
                       return;
                     }
                     setStep(2);
                   }}
-                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-black dark:bg-white text-white dark:text-black font-bold text-xs shadow-sm transition-all hover:opacity-90 font-mono cursor-pointer"
+                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-black dark:bg-white text-white dark:text-black font-bold text-xs shadow-sm transition-all hover:opacity-90 cursor-pointer"
                 >
                   <span>NEXT: ADD PRODUCT ROWS</span>
                   <ArrowRight className="w-4 h-4" />
@@ -872,7 +1035,7 @@ export const MaterialInwardWizard: React.FC = () => {
                 }}
               />
 
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between font-mono">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between font-mono gap-3 flex-wrap">
                 <button
                   onClick={() => setStep(1)}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs transition-colors cursor-pointer"
@@ -880,19 +1043,31 @@ export const MaterialInwardWizard: React.FC = () => {
                   <ArrowLeft className="w-4 h-4" />
                   <span>BACK: VENDOR PO</span>
                 </button>
-                <button
-                  onClick={() => {
-                    if (items.length === 0 || items.some(i => !i.sku || Number(i.quantity) <= 0)) {
-                      quickNotification('Validation Error', 'Please ensure all item rows have a valid Product SKU and quantity greater than 0.', 'alert');
-                      return;
-                    }
-                    setStep(3);
-                  }}
-                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-black dark:bg-white text-white dark:text-black font-bold text-xs shadow-sm transition-all hover:opacity-90 cursor-pointer"
-                >
-                  <span>NEXT: BARCODE & BATCH REVIEW</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSaveDraft}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-800 dark:text-amber-300 font-bold text-xs transition-colors cursor-pointer"
+                    title="Save current shipment items as draft"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>{editingDraftId ? 'UPDATE DRAFT' : 'SAVE AS DRAFT'}</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (items.length === 0 || items.some(i => !i.sku || Number(i.quantity) <= 0)) {
+                        quickNotification('Validation Error', 'Please ensure all item rows have a valid Product SKU and quantity greater than 0.', 'alert');
+                        return;
+                      }
+                      setStep(3);
+                    }}
+                    className="flex items-center gap-2 px-6 py-3 rounded-xl bg-black dark:bg-white text-white dark:text-black font-bold text-xs shadow-sm transition-all hover:opacity-90 cursor-pointer"
+                  >
+                    <span>NEXT: BARCODE & BATCH REVIEW</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -958,7 +1133,7 @@ export const MaterialInwardWizard: React.FC = () => {
                 </label>
               </div>
 
-              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between font-mono">
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between font-mono gap-3 flex-wrap">
                 <button
                   onClick={() => setStep(2)}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs transition-colors cursor-pointer"
@@ -966,14 +1141,32 @@ export const MaterialInwardWizard: React.FC = () => {
                   <ArrowLeft className="w-4 h-4" />
                   <span>BACK: DYNAMIC ITEMS</span>
                 </button>
-                <button
-                  onClick={handleCompleteGrn}
-                  disabled={isSubmitting}
-                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{isSubmitting ? 'COMMITTING...' : 'CONFIRM & COMMIT GRN'}</span>
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSaveDraft}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-800 dark:text-amber-300 font-bold text-xs transition-colors cursor-pointer"
+                    title="Save draft for later completion"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>{editingDraftId ? 'UPDATE DRAFT' : 'SAVE AS DRAFT'}</span>
+                  </button>
+                  <button
+                    onClick={handleCompleteGrn}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      {isSubmitting
+                        ? 'COMMITTING...'
+                        : editingDraftId
+                        ? 'FINALIZE & COMMIT GRN'
+                        : 'CONFIRM & COMMIT GRN'}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1104,7 +1297,14 @@ export const MaterialInwardWizard: React.FC = () => {
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-6 font-mono">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
               <div>
-                <span className="text-xs text-amber-600 dark:text-amber-400 font-bold">{viewingGrn.grnNumber}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-amber-600 dark:text-amber-400 font-bold">{viewingGrn.grnNumber}</span>
+                  {viewingGrn.status === 'draft' && (
+                    <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold border border-amber-500/30">
+                      DRAFT
+                    </span>
+                  )}
+                </div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">Supplier: {viewingGrn.vendorName}</h3>
               </div>
               <button
@@ -1114,6 +1314,22 @@ export const MaterialInwardWizard: React.FC = () => {
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {viewingGrn.status === 'draft' && (
+              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>This voucher is currently saved as an uncommitted <strong>DRAFT</strong>. Stock quantities and batch barcodes have not yet been modified.</span>
+                </div>
+                <button
+                  onClick={() => handleResumeDraft(viewingGrn)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shrink-0 cursor-pointer shadow-xs transition-colors"
+                >
+                  <FileEdit className="w-3.5 h-3.5" />
+                  <span>Resume & Finalize</span>
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-950 p-4 rounded-xl">
               <div>PO Number: <strong className="text-slate-900 dark:text-white">{viewingGrn.poNumber}</strong></div>
@@ -1151,24 +1367,47 @@ export const MaterialInwardWizard: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
               <div className="text-sm font-bold">
                 Total GRN Valuation: <span className="text-emerald-600">₹{Number(viewingGrn.totalValue).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
               </div>
-              <button
-                onClick={() => {
-                  const html = buildProductLabelsHtml(
-                    { sku: viewingGrn.items?.[0]?.sku || 'SKU', name: viewingGrn.items?.[0]?.name || 'Item', price: viewingGrn.items?.[0]?.sellingPrice || 100 } as any,
-                    viewingGrn.items?.[0]?.quantity || 1,
-                    viewingGrn.vendorName,
-                    viewingGrn.grnNumber
-                  );
-                  printHtmlDocument(html, viewingGrn.grnNumber);
-                }}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-black dark:bg-white text-white dark:text-black font-bold text-xs cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" /> Print Labels
-              </button>
+              <div className="flex items-center gap-2">
+                {viewingGrn.status === 'draft' && (
+                  <button
+                    type="button"
+                    onClick={() => handleResumeDraft(viewingGrn)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs cursor-pointer shadow-xs transition-colors"
+                  >
+                    <FileEdit className="w-3.5 h-3.5" /> Resume Draft
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    exportGrnToPdf(viewingGrn);
+                    quickNotification('GRN PDF Saved', `Voucher PDF saved for ${viewingGrn.grnNumber}`, 'success');
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-xs transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      exportGrnToPdf(viewingGrn);
+                      quickNotification('GRN PDF Saved', `Voucher saved for ${viewingGrn.grnNumber}`, 'success');
+                    } catch (e) {
+                      console.warn('PDF export error:', e);
+                    }
+                    const html = buildGrnReceiptHtml(viewingGrn);
+                    printHtmlDocument(html, viewingGrn.grnNumber);
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer shadow-xs transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Print Voucher
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -47,7 +47,7 @@ export interface DynamicShipmentItemsTableProps {
   className?: string;
 }
 
-const TAX_OPTIONS = [
+export const TAX_OPTIONS = [
   { label: '0%', value: 0 },
   { label: '5%', value: 5 },
   { label: '12%', value: 12 },
@@ -72,6 +72,7 @@ interface SkuSearchLookupProps {
   availableProducts: SkuProductInfo[];
   existingSkus?: Set<string>;
   onSelect: (sku: string) => void;
+  onOpenChange?: (isOpen: boolean) => void;
   currencySymbol?: string;
 }
 
@@ -81,6 +82,7 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
   availableProducts = [],
   existingSkus,
   onSelect,
+  onOpenChange,
   currencySymbol = '₹'
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -91,11 +93,19 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const setDropdownOpen = useCallback(
+    (open: boolean) => {
+      setIsOpen(open);
+      onOpenChange?.(open);
+    },
+    [onOpenChange]
+  );
+
   // Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
+        setDropdownOpen(false);
       }
     };
     if (isOpen) {
@@ -104,7 +114,7 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isOpen]);
+  }, [isOpen, setDropdownOpen]);
 
   // AJAX-style dynamic backend search limited to top 5 matching items
   useEffect(() => {
@@ -118,17 +128,25 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
           setFetchedProducts(res.products.slice(0, 5));
         } else {
           const q = searchTerm.trim().toLowerCase();
-          const filtered = !q ? availableProducts : availableProducts.filter(p => p.sku.toLowerCase().includes(q) || (p.name || '').toLowerCase().includes(q));
+          const filtered = !q
+            ? availableProducts
+            : availableProducts.filter(
+                p => p.sku.toLowerCase().includes(q) || (p.name || '').toLowerCase().includes(q)
+              );
           setFetchedProducts(filtered.slice(0, 5));
         }
       } catch {
         const q = searchTerm.trim().toLowerCase();
-        const filtered = !q ? availableProducts : availableProducts.filter(p => p.sku.toLowerCase().includes(q) || (p.name || '').toLowerCase().includes(q));
+        const filtered = !q
+          ? availableProducts
+          : availableProducts.filter(
+              p => p.sku.toLowerCase().includes(q) || (p.name || '').toLowerCase().includes(q)
+            );
         setFetchedProducts(filtered.slice(0, 5));
       } finally {
         setIsLoading(false);
       }
-    }, 250);
+    }, 200);
 
     return () => clearTimeout(timer);
   }, [searchTerm, isOpen, availableProducts]);
@@ -152,7 +170,7 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
 
   const handleSelectProduct = (sku: string) => {
     onSelect(sku);
-    setIsOpen(false);
+    setDropdownOpen(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -160,7 +178,7 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
 
     if (!isOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
       setSearchTerm(value || '');
-      setIsOpen(true);
+      setDropdownOpen(true);
       return;
     }
 
@@ -181,7 +199,7 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
           handleSelectProduct(searchTerm.trim());
         }
       } else if (e.key === 'Escape') {
-        setIsOpen(false);
+        setDropdownOpen(false);
       }
     }
   };
@@ -189,7 +207,7 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
   return (
     <div ref={dropdownRef} className="relative w-full">
       <div className="relative flex items-center">
-        <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
           type="text"
           placeholder="Search SKU or Name..."
@@ -197,14 +215,14 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
           value={isOpen ? searchTerm : value}
           onFocus={() => {
             setSearchTerm(value || '');
-            setIsOpen(true);
+            setDropdownOpen(true);
           }}
           onChange={e => {
             setSearchTerm(e.target.value);
-            if (!isOpen) setIsOpen(true);
+            if (!isOpen) setDropdownOpen(true);
           }}
           onKeyDown={handleKeyDown}
-          className="w-full h-10 pl-9 pr-8 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-mono text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent transition-all disabled:opacity-60 placeholder:text-gray-400"
+          className="w-full h-10.5 pl-9 pr-8 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#D97706] focus:border-transparent transition-all disabled:opacity-60 placeholder:text-slate-400"
         />
 
         {value && !disabled ? (
@@ -214,23 +232,25 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
               e.stopPropagation();
               onSelect('');
               setSearchTerm('');
-              setIsOpen(false);
+              setDropdownOpen(false);
             }}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             title="Clear SKU"
           >
             <X className="w-3.5 h-3.5" />
           </button>
         ) : (
-          <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         )}
       </div>
 
-      {/* Search Dropdown Popover */}
+      {/* SKU SEARCH LOOKUP Dropdown - Absolute Floating Card */}
       {isOpen && (
-        <div className="absolute left-0 top-full mt-2 w-full min-w-[380px] sm:w-[440px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in-50 zoom-in-95 duration-150">
-          <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/80 flex items-center justify-between text-[11px] font-mono text-slate-500 uppercase tracking-wider">
-            <span>SKU Search Lookup ({filteredProducts.length} results)</span>
+        <div className="absolute left-0 top-full mt-1.5 w-full min-w-[340px] max-w-[420px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in-50 zoom-in-95 duration-150">
+          <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 flex items-center justify-between text-[11px] font-mono text-slate-500 uppercase tracking-wider">
+            <span className="font-bold text-slate-700 dark:text-slate-300">
+              SKU Search Lookup ({filteredProducts.length} results)
+            </span>
             <span className="text-[10px] text-slate-400">↑↓ navigate, ↵ select</span>
           </div>
 
@@ -269,7 +289,7 @@ const SkuSearchLookup: React.FC<SkuSearchLookupProps> = ({
                         )}
                         {existingSkus?.has(p.sku.toUpperCase()) && (
                           <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-900/60 font-mono font-bold text-amber-700 dark:text-amber-300">
-                            In Shipment (auto-merges)
+                            In Shipment
                           </span>
                         )}
                       </div>
@@ -330,6 +350,9 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
     }
     return [createEmptyRow()];
   });
+
+  // Track which row has the active dropdown open to elevate its z-index
+  const [activeDropdownRowId, setActiveDropdownRowId] = useState<string | null>(null);
 
   // Calculate row total dynamically: (Unit Cost * Qty) + (Tax % applied)
   const calculateRowTotal = (
@@ -425,7 +448,7 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
       const desc = matchedProd?.description || matchedProd?.name || '';
       const cost = matchedProd?.unitCost ?? matchedProd?.cost ?? '';
       const price = matchedProd?.sellingPrice ?? matchedProd?.price ?? '';
-      const batch = matchedProd?.batchNo || '';
+      const batch = matchedProd?.batchNo || `BAT-2026-${Math.floor(10 + Math.random() * 89)}`;
       const tax = matchedProd?.taxRate ?? 0;
       const validTax = [0, 5, 12, 18].includes(tax) ? tax : 0;
 
@@ -433,8 +456,14 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
         // Product already exists in another row! Consolidate quantity into the existing row
         const existingRow = rows[duplicateIndex];
         const currentRow = rows.find(r => r.id === rowId);
-        const addQty = typeof currentRow?.quantity === 'number' ? currentRow.quantity : (parseFloat(currentRow?.quantity as any) || 1);
-        const prevQty = typeof existingRow.quantity === 'number' ? existingRow.quantity : (parseFloat(existingRow.quantity as any) || 0);
+        const addQty =
+          typeof currentRow?.quantity === 'number'
+            ? currentRow.quantity
+            : parseFloat(currentRow?.quantity as any) || 1;
+        const prevQty =
+          typeof existingRow.quantity === 'number'
+            ? existingRow.quantity
+            : parseFloat(existingRow.quantity as any) || 0;
         const newQty = prevQty + addQty;
 
         setRows(prev => {
@@ -532,19 +561,19 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
 
   return (
     <div
-      className={`bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl shadow-xs font-sans ${className}`}
+      className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs font-sans ${className}`}
     >
-      {/* Table Header Bar */}
-      <div className="px-6 py-4.5 border-b border-gray-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 rounded-t-2xl">
+      {/* Table Header Bar with Neatly Aligned "+ ADD SKU ROW" */}
+      <div className="px-6 py-4.5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 rounded-t-2xl">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-800 dark:text-gray-200">
-            <Layers className="w-4.5 h-4.5" />
+          <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+            <Layers className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-gray-900 dark:text-white">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">
               Dynamic Shipment Items
             </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Goods Received Note (GRN) line item valuation & inward inventory
             </p>
           </div>
@@ -554,7 +583,7 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
           <button
             type="button"
             onClick={handleAddRow}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-black hover:bg-neutral-800 text-white text-xs font-semibold tracking-wide transition-colors cursor-pointer shadow-sm self-start sm:self-auto"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D97706] hover:bg-[#b45309] text-white text-xs sm:text-sm font-bold font-mono tracking-wide transition-colors cursor-pointer shadow-xs self-start sm:self-auto"
           >
             <Plus className="w-4 h-4" />
             <span>+ ADD SKU ROW</span>
@@ -562,182 +591,153 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
         )}
       </div>
 
-      {/* Responsive Table Container with generous row spacing */}
+      {/* Clean Table Grid Container */}
       <div className="overflow-x-auto overflow-y-visible">
-        <table className="w-full text-left border-collapse min-w-[1060px]">
-          <thead>
-            <tr className="bg-gray-50/90 dark:bg-slate-950/70 border-b border-gray-200 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-gray-600 dark:text-gray-400 font-mono h-12">
-              <th className="py-3 px-4 w-[21%] align-middle">SKU LOOKUP</th>
-              <th className="py-3 px-3 w-[22%] align-middle">PRODUCT DESCRIPTION</th>
-              <th className="py-3 px-3 w-[8%] text-center align-middle">QTY</th>
-              <th className="py-3 px-3 w-[11%] align-middle">UNIT COST ({currencySymbol})</th>
-              <th className="py-3 px-3 w-[11%] align-middle">SELLING PRICE ({currencySymbol})</th>
-              <th className="py-3 px-3 w-[10%] align-middle">BATCH #</th>
-              <th className="py-3 px-3 w-[8%] align-middle">TAX (%)</th>
-              <th className="py-3 px-4 w-[11%] text-right align-middle">ROW TOTAL</th>
-              {!readOnly && (
-                <th className="py-3 px-3 w-[5%] text-center align-middle">ACTIONS</th>
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80 text-xs sm:text-sm">
-            {rows.map((row) => (
-              <tr
-                key={row.id}
-                className="hover:bg-gray-50/70 dark:hover:bg-slate-800/40 transition-colors min-h-[60px] h-[64px]"
-              >
-                {/* 1. SKU LOOKUP (Searchable Combobox / Typeahead) */}
-                <td className="py-3.5 px-4 align-middle">
-                  <SkuSearchLookup
-                    value={row.sku}
-                    disabled={readOnly}
-                    availableProducts={availableProducts}
-                    existingSkus={existingSkus}
-                    onSelect={sku => handleSkuSelect(row.id, sku)}
-                    currencySymbol={currencySymbol}
-                  />
-                </td>
+        <div className="min-w-[960px]">
+          {/* Explicit Table Column Headers (30% / 30% / 10% / 10% / 10% / 10%) */}
+          <div className="grid grid-cols-[30%_30%_10%_10%_10%_10%] gap-3 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono items-center">
+            <div>SKU SEARCH LOOKUP (30%)</div>
+            <div>PRODUCT DESCRIPTION / TITLE (30%)</div>
+            <div className="text-center">QTY (10%)</div>
+            <div className="text-right">UNIT COST ({currencySymbol}) (10%)</div>
+            <div className="text-center">TAX % (10%)</div>
+            <div className="text-right pr-10">TOTAL ({currencySymbol}) (10%)</div>
+          </div>
 
-                {/* 2. PRODUCT DESCRIPTION (Read-only) */}
-                <td className="py-3.5 px-3 align-middle">
-                  <input
-                    type="text"
-                    readOnly
-                    tabIndex={-1}
-                    placeholder="Auto-filled description"
-                    value={row.description}
-                    className="w-full h-10 px-3 rounded-lg border border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-slate-950/80 text-gray-700 dark:text-gray-300 text-xs sm:text-sm focus:outline-none cursor-default truncate font-medium"
-                    title={row.description}
-                  />
-                </td>
+          {/* Table Rows Body with min-height to ensure dropdown has plenty of space */}
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/80 min-h-[300px]">
+            {rows.map((row) => {
+              const isDropdownActive = activeDropdownRowId === row.id;
 
-                {/* 3. QTY */}
-                <td className="py-3.5 px-3 align-middle">
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    disabled={readOnly}
-                    value={row.quantity}
-                    onChange={e => {
-                      const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
-                      handleRowChange(row.id, 'quantity', isNaN(val as number) ? '' : val);
-                    }}
-                    className="w-full h-10 px-2 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white text-center font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent transition-all disabled:opacity-60 font-mono"
-                  />
-                </td>
-
-                {/* 4. UNIT COST (₹) */}
-                <td className="py-3.5 px-3 align-middle">
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="0.00"
-                    disabled={readOnly}
-                    value={row.unitCost}
-                    onChange={e => {
-                      const val = e.target.value === '' ? '' : parseFloat(e.target.value);
-                      handleRowChange(row.id, 'unitCost', isNaN(val as number) ? '' : val);
-                    }}
-                    className="w-full h-10 px-3 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-mono text-xs sm:text-sm font-semibold text-emerald-700 dark:text-emerald-400 focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent transition-all disabled:opacity-60"
-                  />
-                </td>
-
-                {/* 5. SELLING PRICE (₹) */}
-                <td className="py-3.5 px-3 align-middle">
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="0.00"
-                    disabled={readOnly}
-                    value={row.sellingPrice}
-                    onChange={e => {
-                      const val = e.target.value === '' ? '' : parseFloat(e.target.value);
-                      handleRowChange(row.id, 'sellingPrice', isNaN(val as number) ? '' : val);
-                    }}
-                    className="w-full h-10 px-3 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-mono text-xs sm:text-sm font-semibold text-blue-700 dark:text-blue-400 focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent transition-all disabled:opacity-60"
-                  />
-                </td>
-
-                {/* 6. BATCH # */}
-                <td className="py-3.5 px-3 align-middle">
-                  <input
-                    type="text"
-                    placeholder="e.g. BAT-2026-01"
-                    disabled={readOnly}
-                    value={row.batchNo}
-                    onChange={e => handleRowChange(row.id, 'batchNo', e.target.value)}
-                    className="w-full h-10 px-3 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-mono text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent transition-all disabled:opacity-60"
-                  />
-                </td>
-
-                {/* 7. TAX (%) */}
-                <td className="py-3.5 px-3 align-middle">
-                  <select
-                    disabled={readOnly}
-                    value={row.taxRate}
-                    onChange={e =>
-                      handleRowChange(row.id, 'taxRate', parseFloat(e.target.value) || 0)
-                    }
-                    className="w-full h-10 px-2.5 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-mono text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent transition-all disabled:opacity-60 cursor-pointer"
-                  >
-                    {TAX_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-
-                {/* 8. ROW TOTAL */}
-                <td className="py-3.5 px-4 text-right align-middle">
-                  <div className="font-mono font-bold text-gray-900 dark:text-white text-xs sm:text-sm">
-                    {currencySymbol}
-                    {row.total.toFixed(2)}
+              return (
+                <div
+                  key={row.id}
+                  className={`grid grid-cols-[30%_30%_10%_10%_10%_10%] gap-3 px-6 py-3.5 items-center hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors relative ${
+                    isDropdownActive ? 'z-40' : 'z-10'
+                  }`}
+                >
+                  {/* 1. SKU Search Input (30%) */}
+                  <div className="relative">
+                    <SkuSearchLookup
+                      value={row.sku}
+                      disabled={readOnly}
+                      availableProducts={availableProducts}
+                      existingSkus={existingSkus}
+                      onSelect={sku => handleSkuSelect(row.id, sku)}
+                      onOpenChange={open => setActiveDropdownRowId(open ? row.id : null)}
+                      currencySymbol={currencySymbol}
+                    />
                   </div>
-                </td>
 
-                {/* 9. ACTIONS */}
-                {!readOnly && (
-                  <td className="py-3.5 px-3 text-center align-middle">
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveRow(row.id)}
-                      disabled={rows.length === 1 && !row.sku && !row.unitCost}
-                      className="p-2 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400 cursor-pointer inline-flex items-center justify-center"
-                      title="Remove Row"
+                  {/* 2. Product Description / Title (30% - Read-only / Auto-filled) */}
+                  <div>
+                    <input
+                      type="text"
+                      readOnly
+                      tabIndex={-1}
+                      placeholder="Auto-filled description"
+                      value={row.description}
+                      className="w-full h-10.5 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/70 text-slate-700 dark:text-slate-300 text-xs sm:text-sm focus:outline-none cursor-default truncate font-medium"
+                      title={row.description}
+                    />
+                  </div>
+
+                  {/* 3. Qty (10%) */}
+                  <div>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      disabled={readOnly}
+                      value={row.quantity}
+                      onChange={e => {
+                        const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
+                        handleRowChange(row.id, 'quantity', isNaN(val as number) ? '' : val);
+                      }}
+                      className="w-full h-10.5 px-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-center font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#D97706] focus:border-transparent transition-all disabled:opacity-60 font-mono"
+                    />
+                  </div>
+
+                  {/* 4. Unit Cost (10%) */}
+                  <div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      disabled={readOnly}
+                      value={row.unitCost}
+                      onChange={e => {
+                        const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                        handleRowChange(row.id, 'unitCost', isNaN(val as number) ? '' : val);
+                      }}
+                      className="w-full h-10.5 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400 text-right focus:outline-none focus:ring-2 focus:ring-[#D97706] focus:border-transparent transition-all disabled:opacity-60"
+                    />
+                  </div>
+
+                  {/* 5. Tax % (10%) */}
+                  <div>
+                    <select
+                      disabled={readOnly}
+                      value={row.taxRate}
+                      onChange={e =>
+                        handleRowChange(row.id, 'taxRate', parseFloat(e.target.value) || 0)
+                      }
+                      className="w-full h-10.5 px-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs sm:text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#D97706] focus:border-transparent transition-all disabled:opacity-60 cursor-pointer"
                     >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                      {TAX_OPTIONS.map(opt => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 6. Total (10%) & Delete Action Button */}
+                  <div className="flex items-center justify-between pl-1">
+                    <div className="font-mono font-black text-slate-900 dark:text-white text-xs sm:text-sm text-right flex-1 pr-2">
+                      {currencySymbol}
+                      {row.total.toFixed(2)}
+                    </div>
+
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRow(row.id)}
+                        disabled={rows.length === 1 && !row.sku && !row.unitCost}
+                        className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-slate-400 cursor-pointer shrink-0"
+                        title="Remove Item Row"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* Summary Section (Bottom of Table) */}
-      <div className="p-5 bg-gray-50/90 dark:bg-slate-950/90 border-t border-gray-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-b-2xl">
+      <div className="p-5 bg-slate-50 dark:bg-slate-950/90 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-b-2xl font-mono">
         <div className="space-y-1">
-          <div className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+          <div className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
             <span>Total Units Received:</span>
-            <span className="font-mono font-bold text-gray-900 dark:text-white bg-white dark:bg-slate-800 px-2.5 py-1 rounded-md border border-gray-200 dark:border-slate-700">
+            <span className="font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800">
               {totalUnits} pcs
             </span>
           </div>
-          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+          <p className="text-[11px] text-slate-400">
             Valuation calculated as: (Unit Cost × Qty) + applicable Tax %
           </p>
         </div>
 
-        <div className="flex items-baseline gap-2.5 sm:text-right">
-          <span className="text-xs uppercase tracking-wider font-bold text-gray-600 dark:text-gray-400 font-mono">
+        <div className="flex items-baseline gap-3 sm:text-right">
+          <span className="text-xs uppercase tracking-wider font-bold text-slate-500">
             TOTAL GRN VALUATION:
           </span>
-          <span className="text-xl sm:text-2xl font-extrabold text-gray-900 dark:text-white font-mono">
+          <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white text-emerald-600 dark:text-emerald-400">
             {currencySymbol}
             {totalValuation.toLocaleString('en-IN', {
               minimumFractionDigits: 2,
