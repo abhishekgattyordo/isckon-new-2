@@ -295,32 +295,10 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const [isInitialLoading, setIsInitialLoading] = useState<boolean>(true);
+  const activeFetchIdRef = React.useRef<number>(0);
 
-  const [allProducts, setAllProducts] = useState<Product[]>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('iskcon_erp_all_products');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch (e) {}
-      }
-    }
-    return INITIAL_PRODUCTS;
-  });
-
-  const [allInwardNotes, setAllInwardNotes] = useState<MaterialInwardNote[]>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('iskcon_erp_all_inward_notes');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch (e) {}
-      }
-    }
-    return INITIAL_INWARD_NOTES;
-  });
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [allInwardNotes, setAllInwardNotes] = useState<MaterialInwardNote[]>([]);
 
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
     if (typeof window !== 'undefined') {
@@ -375,52 +353,16 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return INITIAL_ZONES;
   });
 
-  const [allOrders, setAllOrders] = useState<POSOrder[]>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('iskcon_erp_all_orders');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch (e) {}
-      }
-    }
-    return INITIAL_ORDERS;
-  });
-
-  const [allEvents, setAllEvents] = useState<SalesEvent[]>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('iskcon_erp_all_events');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch (e) {}
-      }
-    }
-    return INITIAL_EVENTS;
-  });
-
-  const [allMovements, setAllMovements] = useState<StockMovement[]>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('iskcon_erp_all_movements');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch (e) {}
-      }
-    }
-    return INITIAL_MOVEMENTS;
-  });
-
+  const [allOrders, setAllOrders] = useState<POSOrder[]>([]);
+  const [allEvents, setAllEvents] = useState<SalesEvent[]>([]);
+  const [allMovements, setAllMovements] = useState<StockMovement[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   // Strict & Robust Branch Matcher
   const isItemInActiveBranch = React.useCallback((item: any, branch: Branch): boolean => {
     if (!item || !branch) return false;
     // Super Admin combined global data view override
-    if (branch.id === 'all-branches' || branch.id === 'all' || branch.code === 'GLOBAL') {
+    if (branch.id === 'all-branches' || branch.id === 'all' || branch.code === 'GLOBAL' || branch.id === 'branch-all') {
       return true;
     }
     if (item.branchId === branch.id || item.branchId === branch.code) return true;
@@ -429,11 +371,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const bName = (item.branchName || '').toLowerCase();
     const zone = (item.warehouseZone || item.warehouse || '').toLowerCase();
 
-    if (branch.id === 'branch-bangalore' || branch.code === 'BLR-SK-05') {
-      return sku.startsWith('BLR-') || bName.includes('bangalore') || zone.includes('bangalore');
+    if (branch.id === 'branch-bangalore' || branch.code === 'BLR-SK-05' || branch.code === 'BLR-05') {
+      return sku.startsWith('BLR-') || bName.includes('bangalore') || zone.includes('bangalore') || item.branchId === 'branch-bangalore' || item.branchId === 'BLR-05';
     }
-    if (branch.id === 'branch-mangalore' || branch.code === 'IXE-JM-06') {
-      return sku.startsWith('MGL-') || bName.includes('mangalore') || zone.includes('mangalore');
+    if (branch.id === 'branch-mangalore' || branch.code === 'IXE-JM-06' || branch.code === 'IXE-06') {
+      return sku.startsWith('MGL-') || bName.includes('mangalore') || zone.includes('mangalore') || item.branchId === 'branch-mangalore' || item.branchId === 'IXE-06';
     }
     if (branch.id === 'branch-vrindavan-store' || branch.code === 'VRN-KB-02') {
       return sku.startsWith('VRN-') || bName.includes('vrindavan') || zone.includes('vrindavan');
@@ -885,6 +827,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   useEffect(() => {
+    const fetchId = ++activeFetchIdRef.current;
+    setIsInitialLoading(true);
+
     const fetchAllData = async () => {
       try {
         const bId = currentBranch?.id;
@@ -903,6 +848,10 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           fetch('/api/recycle-bin').then(r => r.json()).catch(() => ({ success: false })),
           fetch('/api/branches').then(r => r.json()).catch(() => ({ success: false }))
         ]);
+
+        if (fetchId !== activeFetchIdRef.current) {
+          return;
+        }
 
         if (usersRes.success && Array.isArray(usersRes.users)) {
           setUsers(usersRes.users);
@@ -972,7 +921,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (err) {
         console.error('Failed to fetch data records:', err);
       } finally {
-        setIsInitialLoading(false);
+        if (fetchId === activeFetchIdRef.current) {
+          setIsInitialLoading(false);
+        }
       }
     };
     fetchAllData();

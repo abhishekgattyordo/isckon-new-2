@@ -10,47 +10,53 @@ if (!MemoryDb.orders || MemoryDb.orders.length === 0) {
 export async function getOrders(branchId?: string): Promise<POSOrder[]> {
   try {
     if (process.env.DATABASE_URL) {
+      const whereClause: any = {};
+      if (branchId && branchId !== '*') {
+        whereClause.OR = [
+          { branchId: branchId },
+          { branchId: branchId === 'branch-bangalore' ? 'BLR-05' : branchId === 'BLR-05' ? 'branch-bangalore' : branchId },
+          { branchId: branchId === 'branch-mangalore' ? 'IXE-06' : branchId === 'IXE-06' ? 'branch-mangalore' : branchId }
+        ];
+      }
       const dbOrders = await prisma.pOSOrder.findMany({
-        where: branchId && branchId !== '*' ? { branchId } : undefined,
+        where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
         include: { items: true },
         orderBy: { orderNumber: 'desc' },
       });
-      if (dbOrders && dbOrders.length > 0) {
-        return dbOrders.map(o => ({
-          ...o,
-          paymentMethod: o.paymentMethod as any,
-          branchId: (o as any).branchId || undefined,
-          branchName: (o as any).branchName || undefined,
-          items: o.items.map(i => ({
-            product: {
-              id: i.productId,
-              sku: i.productSku,
-              name: i.productName,
-              category: i.productCategory,
-              price: i.productPrice,
-              cost: 0,
-              stock: 0,
-              minStock: 0,
-              warehouseZone: '',
-              batchNo: '',
-              barcode: '',
-              imageUrl: '',
-              status: 'in_stock' as any,
-              lastUpdated: '',
-              supplier: '',
-              rating: 5,
-            },
-            quantity: i.quantity,
-            discountPercent: i.discountPercent,
-            customNote: i.customNote || undefined,
-          })),
-        } as unknown as POSOrder));
-      }
+      return (dbOrders || []).map(o => ({
+        ...o,
+        paymentMethod: o.paymentMethod as any,
+        branchId: (o as any).branchId || undefined,
+        branchName: (o as any).branchName || undefined,
+        items: o.items.map(i => ({
+          product: {
+            id: i.productId,
+            sku: i.productSku,
+            name: i.productName,
+            category: i.productCategory,
+            price: i.productPrice,
+            cost: 0,
+            stock: 0,
+            minStock: 0,
+            warehouseZone: '',
+            batchNo: '',
+            barcode: '',
+            imageUrl: '',
+            status: 'in_stock' as any,
+            lastUpdated: '',
+            supplier: '',
+            rating: 5,
+          },
+          quantity: i.quantity,
+          discountPercent: i.discountPercent,
+          customNote: i.customNote || undefined,
+        })),
+      } as unknown as POSOrder));
     }
   } catch (error) {
     console.warn('Prisma getOrders failed, falling back to MemoryDb:', error);
   }
-  let list = MemoryDb.orders && MemoryDb.orders.length > 0 ? MemoryDb.orders : INITIAL_ORDERS;
+  let list = MemoryDb.orders || [];
   if (branchId && branchId !== '*') {
     list = list.filter(o => {
       if (o.branchId === branchId) return true;

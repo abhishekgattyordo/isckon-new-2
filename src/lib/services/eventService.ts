@@ -10,36 +10,43 @@ if (!MemoryDb.events || MemoryDb.events.length === 0) {
 export async function getEvents(includeDeleted = false, branchId?: string): Promise<SalesEvent[]> {
   try {
     if (process.env.DATABASE_URL) {
+      const branchFilter = branchId && branchId !== '*' ? {
+        OR: [
+          { branchId: branchId },
+          { branchId: branchId === 'branch-bangalore' ? 'BLR-05' : branchId === 'BLR-05' ? 'branch-bangalore' : branchId },
+          { branchId: branchId === 'branch-mangalore' ? 'IXE-06' : branchId === 'IXE-06' ? 'branch-mangalore' : branchId }
+        ]
+      } : {};
+      const whereClause: any = includeDeleted ? branchFilter : { isDeleted: false, ...branchFilter };
+
       const dbEvents = await prisma.salesEvent.findMany({
-        where: includeDeleted ? (branchId && branchId !== '*' ? { branchId } : undefined) : { isDeleted: false, ...(branchId && branchId !== '*' ? { branchId } : {}) },
+        where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
         orderBy: { startDate: 'desc' },
       });
-      if (dbEvents && dbEvents.length > 0) {
-        let mapped = dbEvents.map(e => ({
-          ...e,
-          type: (e.type || 'stall_booth') as any,
-          status: (e.status || 'upcoming') as any,
-          branchId: (e as any).branchId || undefined,
-          branchName: (e as any).branchName || undefined,
-          isDeleted: e.isDeleted || false,
-          deletedAt: e.deletedAt ? e.deletedAt.toISOString() : undefined,
-          deletedBy: e.deletedBy || undefined,
-        } as unknown as SalesEvent));
-        if (branchId && branchId !== '*') {
-          mapped = mapped.filter(e => {
-            if (e.branchId === branchId) return true;
-            if (branchId === 'branch-bangalore' && (e.branchName?.toLowerCase().includes('bangalore') || e.stallLocation?.toLowerCase().includes('bangalore'))) return true;
-            if (branchId === 'branch-mangalore' && (e.branchName?.toLowerCase().includes('mangalore') || e.stallLocation?.toLowerCase().includes('mangalore'))) return true;
-            return false;
-          });
-        }
-        return mapped;
+      let mapped = (dbEvents || []).map(e => ({
+        ...e,
+        type: (e.type || 'stall_booth') as any,
+        status: (e.status || 'upcoming') as any,
+        branchId: (e as any).branchId || undefined,
+        branchName: (e as any).branchName || undefined,
+        isDeleted: e.isDeleted || false,
+        deletedAt: e.deletedAt ? e.deletedAt.toISOString() : undefined,
+        deletedBy: e.deletedBy || undefined,
+      } as unknown as SalesEvent));
+      if (branchId && branchId !== '*') {
+        mapped = mapped.filter(e => {
+          if (e.branchId === branchId) return true;
+          if (branchId === 'branch-bangalore' && (e.branchName?.toLowerCase().includes('bangalore') || e.stallLocation?.toLowerCase().includes('bangalore'))) return true;
+          if (branchId === 'branch-mangalore' && (e.branchName?.toLowerCase().includes('mangalore') || e.stallLocation?.toLowerCase().includes('mangalore'))) return true;
+          return false;
+        });
       }
+      return mapped;
     }
   } catch (error) {
     console.warn('Prisma getEvents failed, falling back to MemoryDb:', error);
   }
-  const list = MemoryDb.events && MemoryDb.events.length > 0 ? MemoryDb.events : INITIAL_EVENTS;
+  const list = MemoryDb.events || [];
   let result = includeDeleted ? list : list.filter(e => !e.isDeleted);
   if (branchId && branchId !== '*') {
     result = result.filter(e => {

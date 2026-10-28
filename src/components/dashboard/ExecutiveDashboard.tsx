@@ -41,7 +41,8 @@ export const ExecutiveDashboard: React.FC = () => {
     setActiveModule,
     user,
     settings,
-    currentBranch
+    currentBranch,
+    isInitialLoading
   } = useERP();
 
   const [salesTimeframe, setSalesTimeframe] = useState<'week' | 'month' | 'year'>('week');
@@ -262,10 +263,18 @@ export const ExecutiveDashboard: React.FC = () => {
             <span className="text-[11px] font-bold text-[#786C65] uppercase">Today's Sales</span>
           </div>
           <div className="mt-3.5 space-y-0.5">
-            <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">
-              {settings.currencySymbol}{metrics.todaySales.toLocaleString()}
-            </span>
-            <p className="text-[10px] text-[#786C65] font-semibold">{orders.length} total orders recorded</p>
+            {isInitialLoading ? (
+              <div className="h-7 w-24 bg-amber-100/60 dark:bg-amber-900/30 animate-pulse rounded-lg mt-0.5" />
+            ) : (
+              <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">
+                {settings.currencySymbol}{metrics.todaySales.toLocaleString()}
+              </span>
+            )}
+            {isInitialLoading ? (
+              <div className="h-3 w-28 bg-gray-100 dark:bg-gray-800 animate-pulse rounded mt-1" />
+            ) : (
+              <p className="text-[10px] text-[#786C65] font-semibold">{orders.length} total orders recorded</p>
+            )}
           </div>
         </div>
 
@@ -278,8 +287,16 @@ export const ExecutiveDashboard: React.FC = () => {
             <span className="text-[11px] font-bold text-[#786C65] uppercase">Books Sold</span>
           </div>
           <div className="mt-3.5 space-y-0.5">
-            <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">{metrics.booksSold}</span>
-            <p className="text-[10px] text-[#786C65] font-semibold">from POS & events</p>
+            {isInitialLoading ? (
+              <div className="h-7 w-16 bg-blue-100/60 dark:bg-blue-900/30 animate-pulse rounded-lg mt-0.5" />
+            ) : (
+              <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">{metrics.booksSold}</span>
+            )}
+            {isInitialLoading ? (
+              <div className="h-3 w-24 bg-gray-100 dark:bg-gray-800 animate-pulse rounded mt-1" />
+            ) : (
+              <p className="text-[10px] text-[#786C65] font-semibold">from POS & events</p>
+            )}
           </div>
         </div>
 
@@ -292,8 +309,16 @@ export const ExecutiveDashboard: React.FC = () => {
             <span className="text-[11px] font-bold text-[#786C65] uppercase">Gift Items</span>
           </div>
           <div className="mt-3.5 space-y-0.5">
-            <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">{metrics.giftsSold}</span>
-            <p className="text-[10px] text-[#786C65] font-semibold">items delivered</p>
+            {isInitialLoading ? (
+              <div className="h-7 w-16 bg-amber-100/60 dark:bg-amber-900/30 animate-pulse rounded-lg mt-0.5" />
+            ) : (
+              <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">{metrics.giftsSold}</span>
+            )}
+            {isInitialLoading ? (
+              <div className="h-3 w-20 bg-gray-100 dark:bg-gray-800 animate-pulse rounded mt-1" />
+            ) : (
+              <p className="text-[10px] text-[#786C65] font-semibold">items delivered</p>
+            )}
           </div>
         </div>
 
@@ -306,10 +331,18 @@ export const ExecutiveDashboard: React.FC = () => {
             <span className="text-[11px] font-bold text-[#786C65] uppercase">Donations</span>
           </div>
           <div className="mt-3.5 space-y-0.5">
-            <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">
-              {settings.currencySymbol}{metrics.donationsTotal.toLocaleString()}
-            </span>
-            <p className="text-[10px] text-[#786C65] font-semibold">contributions</p>
+            {isInitialLoading ? (
+              <div className="h-7 w-20 bg-red-100/60 dark:bg-red-900/30 animate-pulse rounded-lg mt-0.5" />
+            ) : (
+              <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">
+                {settings.currencySymbol}{metrics.donationsTotal.toLocaleString()}
+              </span>
+            )}
+            {isInitialLoading ? (
+              <div className="h-3 w-20 bg-gray-100 dark:bg-gray-800 animate-pulse rounded mt-1" />
+            ) : (
+              <p className="text-[10px] text-[#786C65] font-semibold">contributions</p>
+            )}
           </div>
         </div>
 
@@ -322,10 +355,18 @@ export const ExecutiveDashboard: React.FC = () => {
             <span className="text-[11px] font-bold text-[#786C65] uppercase">Inventory Value</span>
           </div>
           <div className="mt-3.5 space-y-0.5">
-            <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">
-              {settings.currencySymbol}{metrics.inventoryValue.toLocaleString()}
-            </span>
-            <p className="text-[10px] text-[#15803D] font-bold font-mono">{products.length} SKUs in stock</p>
+            {isInitialLoading ? (
+              <div className="h-7 w-24 bg-amber-100/60 dark:bg-amber-900/30 animate-pulse rounded-lg mt-0.5" />
+            ) : (
+              <span className="text-xl sm:text-2xl font-bold font-mono text-[#1F1916]">
+                {settings.currencySymbol}{metrics.inventoryValue.toLocaleString()}
+              </span>
+            )}
+            {isInitialLoading ? (
+              <div className="h-3 w-24 bg-gray-100 dark:bg-gray-800 animate-pulse rounded mt-1" />
+            ) : (
+              <p className="text-[10px] text-[#15803D] font-bold font-mono">{products.length} SKUs in stock</p>
+            )}
           </div>
         </div>
 
@@ -341,10 +382,18 @@ export const ExecutiveDashboard: React.FC = () => {
             <span className="text-[11px] font-bold text-[#786C65] uppercase">Low Stock</span>
           </div>
           <div className="mt-3.5 space-y-0.5">
-            <span className="text-xl sm:text-2xl font-bold font-mono text-[#B91C1C]">{metrics.lowStockCount}</span>
-            <p className="text-[10px] text-[#D97706] font-bold flex items-center gap-0.5">
-              View Items <ChevronDown className="w-3 h-3 rotate-270" />
-            </p>
+            {isInitialLoading ? (
+              <div className="h-7 w-12 bg-red-100/60 dark:bg-red-900/30 animate-pulse rounded-lg mt-0.5" />
+            ) : (
+              <span className="text-xl sm:text-2xl font-bold font-mono text-[#B91C1C]">{metrics.lowStockCount}</span>
+            )}
+            {isInitialLoading ? (
+              <div className="h-3 w-16 bg-gray-100 dark:bg-gray-800 animate-pulse rounded mt-1" />
+            ) : (
+              <p className="text-[10px] text-[#D97706] font-bold flex items-center gap-0.5">
+                View Items <ChevronDown className="w-3 h-3 rotate-270" />
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -359,7 +408,11 @@ export const ExecutiveDashboard: React.FC = () => {
               <h2 className="font-display font-bold text-sm tracking-tight text-[#1F1916]">Sales Overview</h2>
             </div>
             <div className="h-48 w-full mt-4">
-              {orders.length === 0 ? (
+              {isInitialLoading ? (
+                <div className="h-full flex items-center justify-center bg-[#FAF8F5] rounded-2xl animate-pulse">
+                  <span className="text-xs text-[#786C65] font-semibold">Loading sales analytics...</span>
+                </div>
+              ) : orders.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-xs text-[#786C65]">
                   <p>No sales orders recorded yet.</p>
                   <button onClick={() => setActiveModule('pos')} className="mt-2 text-[#D97706] font-bold underline">
@@ -398,7 +451,13 @@ export const ExecutiveDashboard: React.FC = () => {
             </div>
             
             <div className="mt-4 space-y-3.5">
-              {topBooksData.length === 0 ? (
+              {isInitialLoading ? (
+                <div className="space-y-3 py-2">
+                  <div className="h-8 bg-gray-50 rounded-xl animate-pulse" />
+                  <div className="h-8 bg-gray-50 rounded-xl animate-pulse" />
+                  <div className="h-8 bg-gray-50 rounded-xl animate-pulse" />
+                </div>
+              ) : topBooksData.length === 0 ? (
                 <div className="py-12 text-center text-xs text-[#786C65]">
                   No book sales recorded yet.
                 </div>
@@ -431,46 +490,55 @@ export const ExecutiveDashboard: React.FC = () => {
               <h2 className="font-display font-bold text-sm tracking-tight text-[#1F1916]">Sales by Category</h2>
             </div>
             
-            <div className="relative h-40 w-full mt-4 flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={categoryPieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={44}
-                    outerRadius={58}
-                    paddingAngle={3}
-                    dataKey="value"
-                  >
-                    {categoryPieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#E8E2D9', borderRadius: '12px', fontSize: '11px' }}
-                    formatter={(val: any) => [`${val}%`, 'Share']}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              
-              <div className="absolute text-center">
-                <p className="text-base font-bold font-mono text-[#1F1916] leading-none">
-                  {settings.currencySymbol}{metrics.todaySales.toLocaleString()}
-                </p>
-                <p className="text-[9px] text-[#786C65] font-bold uppercase tracking-tight mt-0.5">Total Sales</p>
+            {isInitialLoading ? (
+              <div className="h-52 w-full flex flex-col items-center justify-center gap-2">
+                <div className="w-24 h-24 rounded-full border-3 border-amber-200 border-t-amber-500 animate-spin" />
+                <span className="text-[11px] text-[#786C65] font-semibold">Loading categories...</span>
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-2">
-              {categoryPieData.map((cat, idx) => (
-                <div key={idx} className="flex items-center gap-1.5 text-[10px]">
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
-                  <span className="font-bold text-[#786C65] truncate">{cat.name}</span>
-                  <span className="font-bold text-[#1F1916] ml-auto font-mono">{cat.value}%</span>
+            ) : (
+              <>
+                <div className="relative h-40 w-full mt-4 flex items-center justify-center">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={categoryPieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={44}
+                        outerRadius={58}
+                        paddingAngle={3}
+                        dataKey="value"
+                      >
+                        {categoryPieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#E8E2D9', borderRadius: '12px', fontSize: '11px' }}
+                        formatter={(val: any) => [`${val}%`, 'Share']}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  
+                  <div className="absolute text-center">
+                    <p className="text-base font-bold font-mono text-[#1F1916] leading-none">
+                      {settings.currencySymbol}{metrics.todaySales.toLocaleString()}
+                    </p>
+                    <p className="text-[9px] text-[#786C65] font-bold uppercase tracking-tight mt-0.5">Total Sales</p>
+                  </div>
                 </div>
-              ))}
-            </div>
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-2">
+                  {categoryPieData.map((cat, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5 text-[10px]">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                      <span className="font-bold text-[#786C65] truncate">{cat.name}</span>
+                      <span className="font-bold text-[#1F1916] ml-auto font-mono">{cat.value}%</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 

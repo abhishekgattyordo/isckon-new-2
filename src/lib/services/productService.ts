@@ -132,8 +132,8 @@ export async function getProducts(
         if (branchId && branchId !== '*') {
           filtered = filtered.filter(p => {
             if (p.branchId === branchId) return true;
-            if (branchId === 'branch-bangalore' && (p.sku?.startsWith('BLR-') || p.branchName?.toLowerCase().includes('bangalore') || p.warehouseZone?.toLowerCase().includes('bangalore'))) return true;
-            if (branchId === 'branch-mangalore' && (p.sku?.startsWith('MGL-') || p.branchName?.toLowerCase().includes('mangalore') || p.warehouseZone?.toLowerCase().includes('mangalore'))) return true;
+            if ((branchId === 'branch-bangalore' || branchId === 'BLR-05' || branchId === 'BLR-SK-05') && (p.branchId === 'branch-bangalore' || p.branchId === 'BLR-05' || p.sku?.startsWith('BLR-') || p.branchName?.toLowerCase().includes('bangalore') || p.warehouseZone?.toLowerCase().includes('bangalore'))) return true;
+            if ((branchId === 'branch-mangalore' || branchId === 'IXE-06' || branchId === 'IXE-JM-06') && (p.branchId === 'branch-mangalore' || p.branchId === 'IXE-06' || p.sku?.startsWith('MGL-') || p.branchName?.toLowerCase().includes('mangalore') || p.warehouseZone?.toLowerCase().includes('mangalore'))) return true;
             return false;
           });
         }
@@ -157,12 +157,13 @@ export async function getProducts(
     console.warn('Prisma getProducts failed, falling back to MemoryDb:', error);
   }
 
-  let list = MemoryDb.products && MemoryDb.products.length > 0 ? MemoryDb.products : INITIAL_PRODUCTS;
+  let list = MemoryDb.products || [];
   let filtered = includeDeleted ? list : list.filter(p => !p.isDeleted);
   if (branchId && branchId !== '*') {
     filtered = filtered.filter(p => {
       if (p.branchId === branchId) return true;
-      if (branchId === 'branch-bangalore' && (p.sku?.startsWith('BLR-') || p.branchName?.toLowerCase().includes('bangalore') || p.warehouseZone?.toLowerCase().includes('bangalore'))) return true;
+      if ((branchId === 'branch-bangalore' || branchId === 'BLR-05' || branchId === 'BLR-SK-05') && (p.branchId === 'branch-bangalore' || p.branchId === 'BLR-05' || p.sku?.startsWith('BLR-') || p.branchName?.toLowerCase().includes('bangalore') || p.warehouseZone?.toLowerCase().includes('bangalore'))) return true;
+      if ((branchId === 'branch-mangalore' || branchId === 'IXE-06' || branchId === 'IXE-JM-06') && (p.branchId === 'branch-mangalore' || p.branchId === 'IXE-06' || p.sku?.startsWith('MGL-') || p.branchName?.toLowerCase().includes('mangalore') || p.warehouseZone?.toLowerCase().includes('mangalore'))) return true;
       if (branchId === 'branch-mangalore' && (p.sku?.startsWith('MGL-') || p.branchName?.toLowerCase().includes('mangalore') || p.warehouseZone?.toLowerCase().includes('mangalore'))) return true;
       return false;
     });

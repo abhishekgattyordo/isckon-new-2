@@ -12,29 +12,31 @@ export async function getInwardNotes(includeDeleted = false, branchId?: string):
     if (process.env.DATABASE_URL) {
       const whereClause: any = includeDeleted ? {} : { isDeleted: false };
       if (branchId && branchId !== '*') {
-        whereClause.branchId = branchId;
+        whereClause.OR = [
+          { branchId: branchId },
+          { branchId: branchId === 'branch-bangalore' ? 'BLR-05' : branchId === 'BLR-05' ? 'branch-bangalore' : branchId },
+          { branchId: branchId === 'branch-mangalore' ? 'IXE-06' : branchId === 'IXE-06' ? 'branch-mangalore' : branchId }
+        ];
       }
       const dbNotes = await prisma.materialInwardNote.findMany({
         where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
         include: { items: true },
         orderBy: { grnNumber: 'desc' },
       });
-      if (dbNotes && dbNotes.length > 0) {
-        return dbNotes.map(n => ({
-          ...n,
-          status: n.status as any,
-          branchId: (n as any).branchId || undefined,
-          branchName: (n as any).branchName || undefined,
-          isDeleted: n.isDeleted || false,
-          deletedAt: n.deletedAt ? n.deletedAt.toISOString() : undefined,
-          deletedBy: n.deletedBy || undefined,
-        } as unknown as MaterialInwardNote));
-      }
+      return (dbNotes || []).map(n => ({
+        ...n,
+        status: n.status as any,
+        branchId: (n as any).branchId || undefined,
+        branchName: (n as any).branchName || undefined,
+        isDeleted: n.isDeleted || false,
+        deletedAt: n.deletedAt ? n.deletedAt.toISOString() : undefined,
+        deletedBy: n.deletedBy || undefined,
+      } as unknown as MaterialInwardNote));
     }
   } catch (error) {
     console.warn('Prisma getInwardNotes failed, falling back to MemoryDb:', error);
   }
-  const list = MemoryDb.inwardNotes && MemoryDb.inwardNotes.length > 0 ? MemoryDb.inwardNotes : INITIAL_INWARD_NOTES;
+  const list = MemoryDb.inwardNotes || [];
   let res = includeDeleted ? list : list.filter(n => !n.isDeleted);
   if (branchId && branchId !== '*') {
     res = res.filter(n => {
