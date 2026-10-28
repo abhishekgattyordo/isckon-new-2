@@ -125,6 +125,7 @@ interface ERPContextType {
   restoreItem: (type: RecycleItemType, id: string) => Promise<boolean>;
   permanentDeleteItem: (type: RecycleItemType, id: string) => Promise<boolean>;
   emptyRecycleBin: (type?: RecycleItemType) => Promise<boolean>;
+  isInitialLoading: boolean;
 }
 
 const ERPContext = createContext<ERPContextType | undefined>(undefined);
@@ -293,8 +294,34 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     quickNotification('Branch Switched', `Active workspace switched to "${branch.name}" (${branch.code}).`, 'info');
   };
 
-  const [allProducts, setAllProducts] = useState<Product[]>(INITIAL_PRODUCTS);
-  const [allInwardNotes, setAllInwardNotes] = useState<MaterialInwardNote[]>(INITIAL_INWARD_NOTES);
+  const [isInitialLoading, setIsInitialLoading] = useState<boolean>(true);
+
+  const [allProducts, setAllProducts] = useState<Product[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iskcon_erp_all_products');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+    }
+    return INITIAL_PRODUCTS;
+  });
+
+  const [allInwardNotes, setAllInwardNotes] = useState<MaterialInwardNote[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iskcon_erp_all_inward_notes');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+    }
+    return INITIAL_INWARD_NOTES;
+  });
+
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('iskcon_erp_suppliers');
@@ -313,6 +340,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem('iskcon_erp_suppliers', JSON.stringify(suppliers));
     }
   }, [suppliers]);
+
   const [batches, setBatches] = useState<InventoryBatch[]>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('iskcon_erp_batches');
@@ -346,9 +374,46 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     return INITIAL_ZONES;
   });
-  const [allOrders, setAllOrders] = useState<POSOrder[]>(INITIAL_ORDERS);
-  const [allEvents, setAllEvents] = useState<SalesEvent[]>(INITIAL_EVENTS);
-  const [allMovements, setAllMovements] = useState<StockMovement[]>(INITIAL_MOVEMENTS);
+
+  const [allOrders, setAllOrders] = useState<POSOrder[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iskcon_erp_all_orders');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+    }
+    return INITIAL_ORDERS;
+  });
+
+  const [allEvents, setAllEvents] = useState<SalesEvent[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iskcon_erp_all_events');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+    }
+    return INITIAL_EVENTS;
+  });
+
+  const [allMovements, setAllMovements] = useState<StockMovement[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iskcon_erp_all_movements');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+    }
+    return INITIAL_MOVEMENTS;
+  });
+
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   // Strict & Robust Branch Matcher
@@ -546,34 +611,34 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [allZones]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && !isDbMode && allProducts.length > 0) {
-      localStorage.setItem('iskcon_erp_products', JSON.stringify(allProducts));
+    if (typeof window !== 'undefined' && allProducts.length > 0) {
+      localStorage.setItem('iskcon_erp_all_products', JSON.stringify(allProducts));
     }
-  }, [allProducts, isDbMode]);
+  }, [allProducts]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && !isDbMode && allInwardNotes.length > 0) {
-      localStorage.setItem('iskcon_erp_inward_notes', JSON.stringify(allInwardNotes));
+    if (typeof window !== 'undefined' && allInwardNotes.length > 0) {
+      localStorage.setItem('iskcon_erp_all_inward_notes', JSON.stringify(allInwardNotes));
     }
-  }, [allInwardNotes, isDbMode]);
+  }, [allInwardNotes]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && !isDbMode && allOrders.length > 0) {
-      localStorage.setItem('iskcon_erp_orders', JSON.stringify(allOrders));
+    if (typeof window !== 'undefined' && allOrders.length > 0) {
+      localStorage.setItem('iskcon_erp_all_orders', JSON.stringify(allOrders));
     }
-  }, [allOrders, isDbMode]);
+  }, [allOrders]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && !isDbMode && allEvents.length > 0) {
-      localStorage.setItem('iskcon_erp_events', JSON.stringify(allEvents));
+    if (typeof window !== 'undefined' && allEvents.length > 0) {
+      localStorage.setItem('iskcon_erp_all_events', JSON.stringify(allEvents));
     }
-  }, [allEvents, isDbMode]);
+  }, [allEvents]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && !isDbMode && allMovements.length > 0) {
-      localStorage.setItem('iskcon_erp_movements', JSON.stringify(allMovements));
+    if (typeof window !== 'undefined' && allMovements.length > 0) {
+      localStorage.setItem('iskcon_erp_all_movements', JSON.stringify(allMovements));
     }
-  }, [allMovements, isDbMode]);
+  }, [allMovements]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && !isDbMode && auditLogs.length > 0) {
@@ -858,24 +923,37 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (productsRes.success && Array.isArray(productsRes.products)) {
           setAllProducts(productsRes.products);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_all_products', JSON.stringify(productsRes.products));
+          }
         }
 
         if (inwardRes.success && Array.isArray(inwardRes.inwardNotes)) {
           setAllInwardNotes(inwardRes.inwardNotes);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_all_inward_notes', JSON.stringify(inwardRes.inwardNotes));
+          }
         }
 
         if (ordersRes.success && Array.isArray(ordersRes.orders)) {
           setAllOrders(ordersRes.orders);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_all_orders', JSON.stringify(ordersRes.orders));
+          }
         }
 
         if (eventsRes.success && Array.isArray(eventsRes.events)) {
-          setAllEvents(eventsRes.events.map((e: any) => ({
+          const formattedEvents = eventsRes.events.map((e: any) => ({
             ...e,
             status: e?.status || 'upcoming',
             currentRevenue: Number(e?.currentRevenue || 0),
             targetRevenue: Number(e?.targetRevenue || 0),
             allocatedSKUs: Number(e?.allocatedSKUs || 0)
-          })));
+          }));
+          setAllEvents(formattedEvents);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_all_events', JSON.stringify(formattedEvents));
+          }
         }
 
         if (usersRes.success && Array.isArray(usersRes.users) && usersRes.users.length > 0) {
@@ -893,6 +971,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsDbMode(!!dbConnected);
       } catch (err) {
         console.error('Failed to fetch data records:', err);
+      } finally {
+        setIsInitialLoading(false);
       }
     };
     fetchAllData();
@@ -2513,7 +2593,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         fetchRecycleBin,
         restoreItem,
         permanentDeleteItem,
-        emptyRecycleBin
+        emptyRecycleBin,
+        isInitialLoading
       }}
     >
       {children}
