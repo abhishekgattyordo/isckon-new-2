@@ -77,6 +77,11 @@ export function canAccessModule(user: UserProfile | null | undefined, module: Mo
     return true;
   }
 
+  // Core foundational modules accessible to all authenticated staff
+  if (module === 'dashboard' || module === 'products') {
+    return true;
+  }
+
   // Check explicit assigned permissions array
   if (user.permissions && Array.isArray(user.permissions)) {
     if (module === ('users' as any)) {

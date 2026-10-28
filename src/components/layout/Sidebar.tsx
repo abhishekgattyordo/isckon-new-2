@@ -58,6 +58,7 @@ const NAV_GROUPS: NavGroup[] = [
     title: 'Core Operations',
     items: [
       { id: 'pos', label: 'POS Checkout', icon: ShoppingCart, iconColor: 'text-[#D97706]', iconBg: 'bg-amber-50', badge: 'Live', badgeColor: 'bg-emerald-50 text-[#15803D]' },
+      { id: 'products', label: 'Product Catalog', icon: Package, iconColor: 'text-[#D97706]', iconBg: 'bg-amber-50' },
       { id: 'inward', label: 'Material Inward (GRN)', icon: FileSpreadsheet, iconColor: 'text-[#D97706]', iconBg: 'bg-amber-50' },
       { id: 'suppliers', label: 'Suppliers & Vendors', icon: Building2, iconColor: 'text-[#D97706]', iconBg: 'bg-amber-50' }
     ]
@@ -183,8 +184,8 @@ export const Sidebar: React.FC = () => {
         <div className="flex-1 overflow-y-auto px-4 py-3 scrollbar-thin scrollbar-thumb-slate-200">
           {NAV_GROUPS.map((group, groupIdx) => {
             const allowedItems = group.items.filter(item => {
-              // Force suppliers to show for debugging/user request
-              if (item.id === 'suppliers') return true;
+              // Ensure core operational items (products, suppliers) are visible for staff
+              if (item.id === 'suppliers' || item.id === 'products') return true;
               return canAccessModule(user, item.id);
             });
             if (allowedItems.length === 0) return null;
