@@ -27,10 +27,17 @@ export async function GET(req: NextRequest) {
 
   try {
     if (dbConnected) {
+      const cleanInputDigits = cleanInput.replace(/[^0-9]/g, '');
+
       // 1. Exact match by Product Barcode
-      console.log(`[BARCODE LOOKUP API] Querying Products table by exact barcode: "${cleanInput}"...`);
-      let dbProduct = await prisma.product.findUnique({
-        where: { barcode: cleanInput }
+      console.log(`[BARCODE LOOKUP API] Querying Products table by barcode: "${cleanInput}"...`);
+      let dbProduct = await prisma.product.findFirst({
+        where: {
+          OR: [
+            { barcode: cleanInput },
+            ...(cleanInputDigits.length >= 6 ? [{ barcode: cleanInputDigits }] : [])
+          ]
+        }
       });
 
       if (dbProduct) {
@@ -41,8 +48,8 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ success: true, type: 'product', product: mappedProduct, dbConnected: true });
       }
 
-      // 2. Exact match by Product SKU (case insensitive)
-      console.log(`[BARCODE LOOKUP API] No barcode match. Querying Products table by exact SKU (case-insensitive): "${cleanInput}"...`);
+      // 2. Match by Product SKU (case insensitive)
+      console.log(`[BARCODE LOOKUP API] No barcode match. Querying Products table by SKU (case-insensitive): "${cleanInput}"...`);
       dbProduct = await prisma.product.findFirst({
         where: { sku: { equals: cleanInput, mode: 'insensitive' } }
       });
@@ -58,13 +65,19 @@ export async function GET(req: NextRequest) {
       // 3. Match by BarcodeRecord barcode_value
       console.log(`[BARCODE LOOKUP API] No SKU match. Querying BarcodeRecords table by barcode_value: "${cleanInput}"...`);
       const barcodeRecord = await prisma.barcodeRecord.findFirst({
-        where: { barcodeValue: cleanInput }
+        where: {
+          OR: [
+            { barcodeValue: cleanInput },
+            ...(cleanInputDigits.length >= 6 ? [{ barcodeValue: cleanInputDigits }] : []),
+            { barcodeValue: { equals: cleanInput, mode: 'insensitive' } }
+          ]
+        }
       });
 
       if (barcodeRecord) {
         console.log(`[BARCODE LOOKUP API] Found custom barcode record. Mapping barcode value "${cleanInput}" to SKU "${barcodeRecord.sku}"...`);
-        dbProduct = await prisma.product.findUnique({
-          where: { sku: barcodeRecord.sku }
+        dbProduct = await prisma.product.findFirst({
+          where: { sku: { equals: barcodeRecord.sku, mode: 'insensitive' } }
         });
 
         if (dbProduct) {
@@ -135,11 +148,26 @@ export async function GET(req: NextRequest) {
   // Fallback to MemoryDb / Mock Data lookup ONLY if database is NOT connected
   console.log(`[BARCODE LOOKUP API] No database connected. Falling back to MemoryDb searching...`);
 
+  const cleanInputDigits = cleanInput.replace(/[^0-9]/g, '');
+
   // 1. Product by barcode or SKU
-  const memoryProduct = MemoryDb.products.find(p => 
+  let memoryProduct = MemoryDb.products.find(p => 
     p.barcode === cleanInput || 
+    (cleanInputDigits.length >= 6 && p.barcode === cleanInputDigits) ||
     p.sku.toLowerCase() === cleanInput.toLowerCase()
   );
+
+  // If not found in product barcodes directly, check MemoryDb.barcodeRecords
+  if (!memoryProduct && Array.isArray(MemoryDb.barcodeRecords)) {
+    const memRecord = MemoryDb.barcodeRecords.find(b => 
+      b.barcodeValue === cleanInput || 
+      (cleanInputDigits.length >= 6 && b.barcodeValue === cleanInputDigits) ||
+      b.sku?.toLowerCase() === cleanInput.toLowerCase()
+    );
+    if (memRecord) {
+      memoryProduct = MemoryDb.products.find(p => p.sku.toLowerCase() === memRecord.sku.toLowerCase());
+    }
+  }
 
   if (memoryProduct) {
     console.log(`[BARCODE LOOKUP API] SUCCESS (MemoryDb): Found product: ID: ${memoryProduct.id}, SKU: ${memoryProduct.sku}, Name: "${memoryProduct.name}"`);

@@ -143,6 +143,12 @@ export const POSTerminal: React.FC = () => {
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [showReceiptPreview, setShowReceiptPreview] = useState(false);
 
+  // Custom Ad-hoc Tag Modal States
+  const [isCustomTagModalOpen, setIsCustomTagModalOpen] = useState(false);
+  const [customTagName, setCustomTagName] = useState('Special VIP Discount');
+  const [customTagType, setCustomTagType] = useState<'percentage' | 'flat'>('percentage');
+  const [customTagValue, setCustomTagValue] = useState<number | string>(10);
+
   // States for confirming product details before adding to cart
   const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
   const [scannedQuantity, setScannedQuantity] = useState<number>(1);
@@ -193,15 +199,23 @@ export const POSTerminal: React.FC = () => {
   const cartRawSubtotal = cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0);
   const cartTotalItems = cart.length;
   const cartTotalUnits = cart.reduce((acc, item) => acc + item.quantity, 0);
-  const discountPercent = activeTag?.discount || 0;
-  const discountAmount = (cartRawSubtotal * discountPercent) / 100;
+
+  const isFlatDiscount = activeTag && (activeTag as any).type === 'flat';
+  const discountVal = activeTag?.discount || 0;
+  const discountAmount = isFlatDiscount 
+    ? Math.min(cartRawSubtotal, discountVal) 
+    : (cartRawSubtotal * discountVal) / 100;
+
   const cartSubtotalAfterDiscount = Math.max(0, cartRawSubtotal - discountAmount);
 
-  // Dynamic, item-specific GST calculation
+  // Dynamic, item-specific GST calculation with proportional discount allocation
   const cartTax = cart.reduce((acc, item) => {
-    const effectivePrice = item.product.price * (1 - discountPercent / 100);
+    const itemTotal = item.product.price * item.quantity;
+    const itemRatio = cartRawSubtotal > 0 ? itemTotal / cartRawSubtotal : 0;
+    const itemDiscount = discountAmount * itemRatio;
+    const effectiveItemTotal = Math.max(0, itemTotal - itemDiscount);
     const taxRate = getProductTaxRate(item.product);
-    return acc + (effectivePrice * item.quantity * (taxRate / 100));
+    return acc + (effectiveItemTotal * (taxRate / 100));
   }, 0);
 
   const cartTotal = cartSubtotalAfterDiscount + cartTax;
@@ -1406,6 +1420,17 @@ export const POSTerminal: React.FC = () => {
                   </select>
                   <ChevronDown className="w-4 h-4 text-[#6B7280] pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
                 </div>
+                <div className="mt-1.5 flex items-center justify-between">
+                  <span className="text-[11px] text-[#6B7280]">Need a specialized ad-hoc discount?</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomTagModalOpen(true)}
+                    className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>+ Custom Ad-hoc Tag</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2381,6 +2406,127 @@ export const POSTerminal: React.FC = () => {
                 Close Dialog
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Ad-hoc Tag Modal */}
+      {isCustomTagModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 font-bold text-base text-slate-900 dark:text-white">
+                <Tag className="w-5 h-5 text-amber-500" />
+                <span>Create Custom Ad-hoc Sales Tag</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCustomTagModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const val = Number(customTagValue);
+                if (isNaN(val) || val < 0) {
+                  alert('Please enter a valid discount value.');
+                  return;
+                }
+                if (customTagType === 'percentage' && val > 100) {
+                  alert('Percentage discount cannot exceed 100%.');
+                  return;
+                }
+
+                const newCustomTag: SalesTag & { type?: 'percentage' | 'flat'; isCustom?: boolean } = {
+                  id: `custom-adhoc-${Date.now()}`,
+                  name: customTagName.trim() || 'Custom Ad-hoc Discount',
+                  discount: val,
+                  type: customTagType,
+                  badgeColor: 'bg-purple-100 text-purple-700'
+                };
+
+                setActiveTag(newCustomTag);
+                setIsCustomTagModalOpen(false);
+                quickNotification(
+                  'Custom Ad-hoc Tag Applied',
+                  `Applied "${newCustomTag.name}" (${val}${customTagType === 'flat' ? '₹' : '%'} OFF) to current cart session.`,
+                  'success'
+                );
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Custom Tag Name / Reason
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={customTagName}
+                  onChange={(e) => setCustomTagName(e.target.value)}
+                  placeholder="e.g. VIP Donor Discount, Manager Special"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Discount Type
+                  </label>
+                  <select
+                    value={customTagType}
+                    onChange={(e) => setCustomTagType(e.target.value as 'percentage' | 'flat')}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  >
+                    <option value="percentage">Percentage (%)</option>
+                    <option value="flat">Flat Amount (₹)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Discount Value ({customTagType === 'flat' ? '₹' : '%'})
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={customTagType === 'percentage' ? 100 : undefined}
+                    step={customTagType === 'percentage' ? '0.5' : '1'}
+                    required
+                    value={customTagValue}
+                    onChange={(e) => setCustomTagValue(e.target.value)}
+                    placeholder={customTagType === 'flat' ? '500' : '10'}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+
+
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/60 dark:border-amber-800/40 text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                ℹ️ <strong>Session Scope:</strong> This custom ad-hoc tag applies exclusively to the current cart session and will not permanently modify master global promotional tags.
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsCustomTagModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md shadow-amber-600/20"
+                >
+                  Apply Custom Tag
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

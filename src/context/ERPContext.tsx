@@ -42,6 +42,7 @@ import {
 } from '../data/initialData';
 import { GLOBAL_ALL_BRANCHES, isSuperAdmin, isBranchAdmin, getDefaultPermissionsForRole } from '../lib/authUtils';
 import { isProductInZone } from '../lib/warehouseUtils';
+import { generateEan13Barcode } from '../lib/barcodeUtils';
 
 interface ERPContextType {
   activeModule: ModuleType | 'audit';
@@ -1151,8 +1152,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    const autoBarcode = prodData.barcode && prodData.barcode.trim() !== ''
+      ? prodData.barcode.trim()
+      : generateEan13Barcode('890', prodData.sku);
+
     const newProd: Product = {
       ...prodData,
+      barcode: autoBarcode,
       id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       branchId: prodData.branchId || currentBranch?.id || 'branch-mayapur-hq',
       branchName: prodData.branchName || currentBranch?.name || 'Mayapur HQ Central'
@@ -1161,6 +1167,31 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const filtered = prev.filter(p => (p.sku || '').trim().toUpperCase() !== normSku);
       return [newProd, ...filtered];
     });
+
+    // Auto-create BarcodeRecord for this newly created product
+    const newBarcodeRecord: BarcodeRecord = {
+      id: `bar-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      sku: newProd.sku,
+      productName: newProd.name,
+      barcodeValue: autoBarcode,
+      batchNo: newProd.batchNo || 'INITIAL-BATCH',
+      format: 'code128',
+      template: 'retail_tag_1x2',
+      generatedAt: new Date().toISOString(),
+      printCount: 24,
+      branchId: newProd.branchId,
+      branchName: newProd.branchName,
+      purchaseCost: Number(newProd.cost) || undefined,
+      sellingPrice: Number(newProd.price) || undefined,
+    };
+    setBarcodes(prev => [newBarcodeRecord, ...prev.filter(b => b.barcodeValue !== autoBarcode)]);
+
+    // Persist barcode record to server
+    fetch('/api/barcodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newBarcodeRecord)
+    }).catch(e => console.warn('Could not save barcode to server:', e));
 
     fetch('/api/products', {
       method: 'POST',
@@ -1172,9 +1203,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'Created Product',
       'products',
       newProd.sku,
-      `Created product "${newProd.name}" under category "${newProd.category}" at branch "${newProd.branchName}" with cost ₹${newProd.cost} and price ₹${newProd.price}.`
+      `Created product "${newProd.name}" under category "${newProd.category}" at branch "${newProd.branchName}" with cost ₹${newProd.cost} and price ₹${newProd.price}. Barcode assigned: ${autoBarcode}.`
     );
-    quickNotification('Product Catalog Updated', `Added SKU ${newProd.sku} (${newProd.name}) to branch ${newProd.branchName}.`, 'success');
+    quickNotification('Product Catalog Updated', `Added SKU ${newProd.sku} (${newProd.name}) with barcode ${autoBarcode}.`, 'success');
   };
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
@@ -1291,50 +1322,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 2. Adjust inventory stock levels for existing products or register new product in catalog (Completed GRNs only)
     consolidatedItems.forEach(item => {
-      setProducts(prev => {
-        const exists = prev.some(p => (p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase());
-        if (exists) {
-          return prev.map(p => {
-            if ((p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase()) {
-              const newStock = p.stock + item.quantity;
-              return {
-                ...p,
-                stock: newStock,
-                cost: item.unitCost > 0 ? item.unitCost : p.cost,
-                price: item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : p.price,
-                batchNo: item.batchNo || p.batchNo,
-                status: newStock <= p.minStock ? 'low_stock' : 'in_stock',
-                lastUpdated: new Date().toISOString()
-              };
-            }
-            return p;
-          });
-        } else {
-          // If product doesn't exist in active branch, add it cleanly
-          const newProductEntry: Product = {
-            id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-            sku: item.sku,
-            name: item.name || 'Inwarded Product',
-            category: 'General Merchandise',
-            price: item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : (item.unitCost * 1.5),
-            cost: item.unitCost,
-            stock: item.quantity,
-            minStock: 5,
-            warehouseZone: newNote.warehouse || 'Zone A — Main Retail Floor',
-            batchNo: item.batchNo || '',
-            barcode: item.sku,
-            imageUrl: 'https://images.unsplash.com/photo-1582515073490-39981397c445?w=500&auto=format&fit=crop&q=60',
-            supplier: newNote.vendorName || 'General Supplier',
-            rating: 5,
-            status: item.quantity > 5 ? 'in_stock' : 'low_stock',
-            lastUpdated: new Date().toISOString(),
-            branchId: newNote.branchId,
-            branchName: newNote.branchName
-          };
-          return [newProductEntry, ...prev];
-        }
-      });
-
       // Create a new inventory batch
       const newBatch: InventoryBatch = {
         id: `bat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
@@ -1352,16 +1339,72 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBatches(prev => [newBatch, ...prev]);
 
       // Generate a unique batch-bound barcode value (EAN-13 compliant 13-digit identifier)
-      const seedString = `${item.sku}-${newBatch.batchNo}-${newNote.grnNumber}-${Math.floor(item.unitCost)}`;
-      const seedNum = Math.abs(seedString.split('').reduce((acc, c) => ((acc << 5) - acc) + c.charCodeAt(0), 0));
-      const raw9 = String(seedNum).padStart(9, '0').slice(-9);
-      const raw12 = `890${raw9}`;
-      let eanSum = 0;
-      for (let i = 0; i < 12; i++) {
-        eanSum += parseInt(raw12[i], 10) * (i % 2 === 0 ? 1 : 3);
-      }
-      const checkDigit = (10 - (eanSum % 10)) % 10;
-      const uniqueBarcodeVal = `${raw12}${checkDigit}`;
+      const uniqueBarcodeVal = generateEan13Barcode('890', `${item.sku}-${newBatch.batchNo}-${newNote.grnNumber}-${Math.floor(item.unitCost)}`);
+
+      setProducts(prev => {
+        const exists = prev.some(p => (p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase());
+        if (exists) {
+          return prev.map(p => {
+            if ((p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase()) {
+              const newStock = p.stock + item.quantity;
+              const finalBarcode = (!p.barcode || p.barcode.trim() === '' || p.barcode === p.sku)
+                ? uniqueBarcodeVal
+                : p.barcode;
+
+              // Sync barcode back to server if it was previously empty or set to sku
+              if (finalBarcode !== p.barcode) {
+                fetch('/api/products', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id: p.id, updates: { barcode: finalBarcode, stock: newStock } })
+                }).catch(() => {});
+              }
+
+              return {
+                ...p,
+                stock: newStock,
+                cost: item.unitCost > 0 ? item.unitCost : p.cost,
+                price: item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : p.price,
+                batchNo: item.batchNo || p.batchNo,
+                barcode: finalBarcode,
+                status: newStock <= p.minStock ? 'low_stock' : 'in_stock',
+                lastUpdated: new Date().toISOString()
+              };
+            }
+            return p;
+          });
+        } else {
+          // If product doesn't exist in active branch, add it cleanly with valid barcode
+          const newProductEntry: Product = {
+            id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            sku: item.sku,
+            name: item.name || 'Inwarded Product',
+            category: 'General Merchandise',
+            price: item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : (item.unitCost * 1.5),
+            cost: item.unitCost,
+            stock: item.quantity,
+            minStock: 5,
+            warehouseZone: newNote.warehouse || 'Zone A — Main Retail Floor',
+            batchNo: item.batchNo || '',
+            barcode: uniqueBarcodeVal,
+            imageUrl: 'https://images.unsplash.com/photo-1582515073490-39981397c445?w=500&auto=format&fit=crop&q=60',
+            supplier: newNote.vendorName || 'General Supplier',
+            rating: 5,
+            status: item.quantity > 5 ? 'in_stock' : 'low_stock',
+            lastUpdated: new Date().toISOString(),
+            branchId: newNote.branchId,
+            branchName: newNote.branchName
+          };
+
+          fetch('/api/products', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newProductEntry)
+          }).catch(() => {});
+
+          return [newProductEntry, ...prev];
+        }
+      });
 
       const newBarcodeRec: BarcodeRecord = {
         id: `bar-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -1381,6 +1424,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         branchName: newNote.branchName
       };
       setBarcodes(prev => [newBarcodeRec, ...prev]);
+
+      // Persist barcode record to backend
+      fetch('/api/barcodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newBarcodeRec)
+      }).catch(e => console.warn('Could not save barcode to server:', e));
 
       // Add audit movement
       const mov: StockMovement = {

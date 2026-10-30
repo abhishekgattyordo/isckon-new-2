@@ -29,8 +29,10 @@ import {
   SlidersHorizontal,
   IndianRupee,
   Lock,
-  MapPin
+  MapPin,
+  RefreshCw
 } from 'lucide-react';
+import { generateEan13Barcode } from '../../lib/barcodeUtils';
 
 interface CategorySearchDropdownProps {
   value: string;
@@ -242,7 +244,7 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
 };
 
 export const ProductManagement: React.FC = () => {
-  const { products, addProduct, updateProduct, deleteProduct, zones, quickNotification, batches, currentBranch } = useERP();
+  const { products, addProduct, updateProduct, deleteProduct, zones, quickNotification, batches, currentBranch, suppliers } = useERP();
   
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [searchQuery, setSearchQuery] = useState('');
@@ -359,6 +361,7 @@ export const ProductManagement: React.FC = () => {
 
   const handleOpenDrawer = (item: 'new' | Product) => {
     if (item === 'new') {
+      const autoBarcode = generateEan13Barcode('890');
       setFormData({
         sku: '',
         name: '',
@@ -370,7 +373,7 @@ export const ProductManagement: React.FC = () => {
         minStock: '' as any,
         warehouseZone: zones[0]?.name || 'Zone A — Main Retail Floor',
         batchNo: '',
-        barcode: '',
+        barcode: autoBarcode,
         imageUrl: '',
         status: 'in_stock',
         supplier: '',
@@ -399,6 +402,11 @@ export const ProductManagement: React.FC = () => {
     if (stockVal === 0) computedStatus = 'out_of_stock';
     else if (stockVal <= minVal) computedStatus = 'low_stock';
 
+    // Ensure barcode is never empty
+    const resolvedBarcode = formData.barcode && formData.barcode.trim() !== ''
+      ? formData.barcode.trim()
+      : generateEan13Barcode('890', formData.sku);
+
     if (activeDrawer === 'new') {
       const existing = products.find(p => p.sku.trim().toUpperCase() === formData.sku!.trim().toUpperCase());
       if (existing) {
@@ -406,6 +414,7 @@ export const ProductManagement: React.FC = () => {
           ...formData,
           sku: formData.sku.trim(),
           name: formData.name.trim(),
+          barcode: resolvedBarcode,
           price: priceVal,
           cost: costVal,
           taxRate: taxRateVal,
@@ -429,7 +438,7 @@ export const ProductManagement: React.FC = () => {
         minStock: minVal,
         warehouseZone: formData.warehouseZone || 'Zone A',
         batchNo: formData.batchNo || '',
-        barcode: formData.barcode || '',
+        barcode: resolvedBarcode,
         imageUrl: formData.imageUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500&auto=format&fit=crop&q=80',
         status: computedStatus,
         lastUpdated: new Date().toISOString(),
@@ -442,6 +451,7 @@ export const ProductManagement: React.FC = () => {
         ...formData,
         sku: formData.sku ? formData.sku.trim() : undefined,
         name: formData.name ? formData.name.trim() : undefined,
+        barcode: resolvedBarcode,
         price: priceVal,
         cost: costVal,
         taxRate: taxRateVal,
@@ -1176,14 +1186,32 @@ export const ProductManagement: React.FC = () => {
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Barcode Serial EAN</label>
-                      <input
-                        type="text"
-                        value={formData.barcode || ''}
-                        onChange={e => setFormData({ ...formData, barcode: e.target.value })}
-                        placeholder="e.g. 8901234567890"
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-slate-600 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                      />
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                          Barcode Serial EAN
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, barcode: generateEan13Barcode('890', formData.sku) })}
+                          className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                          title="Generate fresh 13-digit retail barcode"
+                        >
+                          <RefreshCw className="w-2.5 h-2.5" />
+                          <span>Generate</span>
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={formData.barcode || ''}
+                          onChange={e => setFormData({ ...formData, barcode: e.target.value })}
+                          placeholder="e.g. 8901234567890"
+                          className="w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-400 mt-1 block font-mono">
+                        Auto-assigned GS1 EAN-13 compliant barcode
+                      </span>
                     </div>
                     <div>
                       <div className="flex items-center justify-between mb-1">
@@ -1225,14 +1253,19 @@ export const ProductManagement: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Supplier / Publisher</label>
-                    <input
-                      type="text"
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Supplier</label>
+                    <select
                       value={formData.supplier || ''}
                       onChange={e => setFormData({ ...formData, supplier: e.target.value })}
-                      placeholder="e.g. Bhaktivedanta Book Trust, Mayapur Handlooms"
                       className="w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    />
+                    >
+                      <option value="">Select Supplier...</option>
+                      {suppliers.map(sup => (
+                        <option key={sup.id || sup.name} value={sup.name}>
+                          {sup.name} {sup.code ? `(${sup.code})` : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>

@@ -2,6 +2,7 @@ import { prisma } from '../prisma';
 import { MemoryDb } from '../dbStore';
 import { Product } from '../../types';
 import { INITIAL_PRODUCTS } from '../../data/initialData';
+import { generateEan13Barcode } from '../barcodeUtils';
 
 if (MemoryDb.products.length === 0) {
   MemoryDb.products = [...INITIAL_PRODUCTS];
@@ -57,6 +58,7 @@ export async function getProducts(
       } catch (e) {}
 
       const whereClause: any = includeDeleted ? {} : { isDeleted: false };
+      whereClause.status = { not: 'Pending Stock Receipt' };
       if (branchId && branchId !== '*') {
         whereClause.branchId = branchId;
       }
@@ -158,7 +160,7 @@ export async function getProducts(
   }
 
   let list = MemoryDb.products || [];
-  let filtered = includeDeleted ? list : list.filter(p => !p.isDeleted);
+  let filtered = includeDeleted ? list : list.filter(p => !p.isDeleted && p.status !== 'Pending Stock Receipt');
   if (branchId && branchId !== '*') {
     filtered = filtered.filter(p => {
       if (p.branchId === branchId) return true;
@@ -237,9 +239,16 @@ export async function getDeletedProducts(): Promise<Product[]> {
 }
 
 export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'>): Promise<Product> {
+  const autoBarcode = prodData.barcode && prodData.barcode.trim() !== ''
+    ? prodData.barcode.trim()
+    : generateEan13Barcode('890', prodData.sku);
+
   const newProduct: Product = {
     ...prodData,
+    barcode: autoBarcode,
     id: `prod-${Date.now()}`,
+    stock: 0,
+    status: 'Pending Stock Receipt',
     branchId: prodData.branchId || 'branch-mayapur-hq',
     branchName: prodData.branchName || 'Mayapur HQ Central',
     lastUpdated: new Date().toISOString(),
@@ -256,13 +265,13 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
           category: newProduct.category,
           price: Number(newProduct.price),
           cost: Number(newProduct.cost),
-          stock: Number(newProduct.stock),
+          stock: 0,
           minStock: Number(newProduct.minStock),
           warehouseZone: newProduct.warehouseZone,
           batchNo: newProduct.batchNo,
           barcode: newProduct.barcode,
           imageUrl: newProduct.imageUrl,
-          status: newProduct.status,
+          status: 'Pending Stock Receipt',
           supplier: newProduct.supplier,
           rating: Number(newProduct.rating),
           description: newProduct.description,
@@ -272,6 +281,24 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
           isDeleted: false,
         },
       });
+      if (newProduct.barcode) {
+        await prisma.barcodeRecord.create({
+          data: {
+            id: `bar-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            sku: newProduct.sku,
+            productName: newProduct.name,
+            barcodeValue: newProduct.barcode,
+            batchNo: newProduct.batchNo || null,
+            format: 'code128',
+            template: 'retail_tag_1x2',
+            generatedAt: new Date().toISOString(),
+            printCount: 24,
+            purchaseCost: Number(newProduct.cost) || null,
+            sellingPrice: Number(newProduct.price) || null,
+          }
+        }).catch(e => console.warn('Could not auto-create barcodeRecord in DB:', e));
+      }
+
       return {
         id: dbProd.id,
         sku: dbProd.sku,
@@ -298,6 +325,24 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
     }
   } catch (error) {
     console.warn('Prisma createProduct failed, saving to MemoryDb:', error);
+  }
+
+  if (newProduct.barcode) {
+    MemoryDb.barcodeRecords.unshift({
+      id: `bar-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      sku: newProduct.sku,
+      productName: newProduct.name,
+      barcodeValue: newProduct.barcode,
+      batchNo: newProduct.batchNo || null,
+      format: 'code128',
+      template: 'retail_tag_1x2',
+      generatedAt: new Date().toISOString(),
+      printCount: 24,
+      branchId: newProduct.branchId || null,
+      branchName: newProduct.branchName || null,
+      purchaseCost: Number(newProduct.cost) || null,
+      sellingPrice: Number(newProduct.price) || null,
+    });
   }
 
   MemoryDb.products.unshift(newProduct);

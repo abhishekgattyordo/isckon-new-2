@@ -43,7 +43,7 @@ export interface Supplier {
   branchName?: string;
 }
 
-export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock' | 'discontinued';
+export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock' | 'discontinued' | 'Pending Stock Receipt';
 
 export interface Branch {
   id: string;

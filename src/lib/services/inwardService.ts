@@ -2,6 +2,7 @@ import { prisma } from '../prisma';
 import { MemoryDb } from '../dbStore';
 import { MaterialInwardNote } from '../../types';
 import { INITIAL_INWARD_NOTES } from '../../data/initialData';
+import { generateEan13Barcode } from '../barcodeUtils';
 
 if (!MemoryDb.inwardNotes || MemoryDb.inwardNotes.length === 0) {
   MemoryDb.inwardNotes = [...INITIAL_INWARD_NOTES];
@@ -127,76 +128,105 @@ export async function createInwardNote(noteData: Omit<MaterialInwardNote, 'id'>)
 
   try {
     if (process.env.DATABASE_URL) {
-      const dbNote = await prisma.materialInwardNote.create({
-        data: {
-          id: newNote.id,
-          grnNumber: newNote.grnNumber,
-          poNumber: newNote.poNumber,
-          vendorName: newNote.vendorName,
-          invoiceDate: newNote.invoiceDate || new Date().toISOString().slice(0, 10),
-          warehouse: newNote.warehouse,
-          status: newNote.status,
-          totalValue: Number(newNote.totalValue),
-          receivedBy: newNote.receivedBy || 'Store Staff',
-          timestamp: newNote.timestamp || new Date().toISOString(),
-          notes: newNote.notes,
-          isDeleted: false,
-          branchId: newNote.branchId,
-          branchName: newNote.branchName,
-          items: {
-            create: cleanItems.map(item => ({
-              sku: item.sku,
-              name: item.name,
-              quantity: Number(item.quantity),
-              unitCost: Number(item.unitCost),
-              sellingPrice: item.sellingPrice ? Number(item.sellingPrice) : null,
-              batchNo: item.batchNo,
-              expiryDate: item.expiryDate || '2035-12-31',
-              taxRate: Number(item.taxRate || 0),
-              total: Number(item.total),
-            })),
-          },
-        },
-        include: { items: true },
-      });
-
-      // Only update product stock if NOT draft
-      if (!isDraft) {
-        for (const item of cleanItems) {
-          const prod = await prisma.product.findUnique({ where: { sku: item.sku } });
-          if (prod) {
-            await prisma.product.update({
-              where: { sku: item.sku },
-              data: {
-                stock: prod.stock + Number(item.quantity),
-                cost: item.unitCost ? Number(item.unitCost) : prod.cost,
-                price: item.sellingPrice ? Number(item.sellingPrice) : prod.price,
-                batchNo: item.batchNo || prod.batchNo,
-                lastUpdated: new Date(),
-              },
-            });
-          } else {
-            await prisma.product.create({
-              data: {
-                id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      const dbNote = await prisma.$transaction(async (tx) => {
+        const createdNote = await tx.materialInwardNote.create({
+          data: {
+            id: newNote.id,
+            grnNumber: newNote.grnNumber,
+            poNumber: newNote.poNumber,
+            vendorName: newNote.vendorName,
+            invoiceDate: newNote.invoiceDate || new Date().toISOString().slice(0, 10),
+            warehouse: newNote.warehouse,
+            status: newNote.status,
+            totalValue: Number(newNote.totalValue),
+            receivedBy: newNote.receivedBy || 'Store Staff',
+            timestamp: newNote.timestamp || new Date().toISOString(),
+            notes: newNote.notes,
+            isDeleted: false,
+            branchId: newNote.branchId,
+            branchName: newNote.branchName,
+            items: {
+              create: cleanItems.map(item => ({
                 sku: item.sku,
-                name: item.name || 'General Inventory Item',
-                category: 'General Merchandise',
-                price: item.sellingPrice ? Number(item.sellingPrice) : (Number(item.unitCost) * 1.5),
-                cost: Number(item.unitCost),
-                stock: Number(item.quantity),
-                minStock: 5,
-                warehouseZone: newNote.warehouse || 'Zone A',
-                batchNo: item.batchNo || '',
-                status: Number(item.quantity) > 5 ? 'in_stock' : 'low_stock',
-                branchId: newNote.branchId,
-                branchName: newNote.branchName,
-                isDeleted: false,
+                name: item.name,
+                quantity: Number(item.quantity),
+                unitCost: Number(item.unitCost) || 0,
+                sellingPrice: item.sellingPrice != null ? Number(item.sellingPrice) : null,
+                batchNo: item.batchNo,
+                expiryDate: item.expiryDate || '2035-12-31',
+                taxRate: Number(item.taxRate || 0),
+                total: Number(item.total),
+              })),
+            },
+          },
+          include: { items: true },
+        });
+
+        // Only update product stock and catalog prices if NOT draft
+        if (!isDraft) {
+          for (const item of cleanItems) {
+            const barcodeVal = generateEan13Barcode('890', `${item.sku}-${item.batchNo || 'BAT'}-${newNote.grnNumber}-${Math.floor(Number(item.unitCost) || 100)}`);
+            const prod = await tx.product.findUnique({ where: { sku: item.sku } });
+
+            if (prod) {
+              const newStock = prod.stock + Number(item.quantity);
+              const productUpdates: any = {
+                stock: newStock,
+                cost: item.unitCost != null ? Number(item.unitCost) : prod.cost,
+                price: item.sellingPrice != null ? Number(item.sellingPrice) : prod.price,
+                batchNo: item.batchNo || prod.batchNo,
+                status: newStock > (prod.minStock || 5) ? 'in_stock' : 'low_stock',
+                lastUpdated: new Date(),
+              };
+              if (!prod.barcode || prod.barcode.trim() === '' || prod.barcode === prod.sku) {
+                productUpdates.barcode = barcodeVal;
               }
-            }).catch(err => console.warn('Could not auto-create product in DB:', err));
+              await tx.product.update({
+                where: { sku: item.sku },
+                data: productUpdates,
+              });
+            } else {
+              await tx.product.create({
+                data: {
+                  id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                  sku: item.sku,
+                  name: item.name || 'General Inventory Item',
+                  category: 'General Merchandise',
+                  price: item.sellingPrice != null ? Number(item.sellingPrice) : (Number(item.unitCost) * 1.5),
+                  cost: Number(item.unitCost) || 0,
+                  stock: Number(item.quantity),
+                  minStock: 5,
+                  warehouseZone: newNote.warehouse || 'Zone A',
+                  batchNo: item.batchNo || '',
+                  barcode: barcodeVal,
+                  status: Number(item.quantity) > 5 ? 'in_stock' : 'low_stock',
+                  branchId: newNote.branchId,
+                  branchName: newNote.branchName,
+                  isDeleted: false,
+                }
+              });
+            }
+
+            await tx.barcodeRecord.create({
+              data: {
+                id: `bar-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                sku: item.sku,
+                productName: item.name || 'General Inventory Item',
+                barcodeValue: barcodeVal,
+                batchNo: item.batchNo || null,
+                format: 'code128',
+                template: 'retail_tag_1x2',
+                generatedAt: new Date().toISOString(),
+                printCount: Number(item.quantity) || 1,
+                purchaseCost: Number(item.unitCost) || null,
+                sellingPrice: item.sellingPrice != null ? Number(item.sellingPrice) : null,
+              }
+            });
           }
         }
-      }
+
+        return createdNote;
+      });
 
       return {
         ...dbNote,
@@ -214,12 +244,17 @@ export async function createInwardNote(noteData: Omit<MaterialInwardNote, 'id'>)
   // Only update product stock in MemoryDb if NOT draft
   if (!isDraft) {
     cleanItems.forEach((item: any) => {
+      const barcodeVal = generateEan13Barcode('890', `${item.sku}-${item.batchNo || 'BAT'}-${newNote.grnNumber}-${Math.floor(item.unitCost || 100)}`);
       const prod = MemoryDb.products.find(p => p.sku === item.sku);
       if (prod) {
         prod.stock += Number(item.quantity);
         if (item.unitCost) prod.cost = Number(item.unitCost);
         if (item.sellingPrice) prod.price = Number(item.sellingPrice);
         if (item.batchNo) prod.batchNo = item.batchNo;
+        prod.status = prod.stock > (prod.minStock || 5) ? 'in_stock' : 'low_stock';
+        if (!prod.barcode || prod.barcode.trim() === '' || prod.barcode === prod.sku) {
+          prod.barcode = barcodeVal;
+        }
       } else {
         MemoryDb.products.unshift({
           id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -232,7 +267,7 @@ export async function createInwardNote(noteData: Omit<MaterialInwardNote, 'id'>)
           minStock: 5,
           warehouseZone: newNote.warehouse || 'Zone A',
           batchNo: item.batchNo || '',
-          barcode: item.sku,
+          barcode: barcodeVal,
           imageUrl: 'https://images.unsplash.com/photo-1582515073490-39981397c445?w=500&auto=format&fit=crop&q=60',
           supplier: newNote.vendorName || 'General Supplier',
           rating: 5,
@@ -243,6 +278,23 @@ export async function createInwardNote(noteData: Omit<MaterialInwardNote, 'id'>)
           lastUpdated: new Date().toISOString()
         });
       }
+
+      MemoryDb.barcodeRecords.unshift({
+        id: `bar-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        sku: item.sku,
+        productName: item.name || 'General Inventory Item',
+        barcodeValue: barcodeVal,
+        batchNo: item.batchNo || null,
+        format: 'code128',
+        template: 'retail_tag_1x2',
+        generatedAt: new Date().toISOString(),
+        printCount: Number(item.quantity) || 1,
+        branchId: newNote.branchId || null,
+        branchName: newNote.branchName || null,
+        grnNumber: newNote.grnNumber,
+        purchaseCost: Number(item.unitCost) || null,
+        sellingPrice: item.sellingPrice ? Number(item.sellingPrice) : null,
+      });
     });
   }
 
@@ -268,15 +320,77 @@ export async function updateInwardNoteService(id: string, updates: Partial<Mater
     MemoryDb.inwardNotes.unshift(updatedNote);
   }
 
-  // If transitioning from draft to completed, update product stock!
+  // If transitioning from draft to completed, update product stock and barcodes!
   if (wasDraft && nowCompleted && Array.isArray(updatedNote.items)) {
-    updatedNote.items.forEach((item: any) => {
+    updatedNote.items.forEach(async (item: any) => {
+      const barcodeVal = generateEan13Barcode('890', `${item.sku}-${item.batchNo || 'BAT'}-${updatedNote.grnNumber}-${Math.floor(item.unitCost || 100)}`);
       const prod = MemoryDb.products.find(p => p.sku === item.sku);
       if (prod) {
         prod.stock += Number(item.quantity || 0);
         if (item.unitCost) prod.cost = Number(item.unitCost);
         if (item.sellingPrice) prod.price = Number(item.sellingPrice);
         if (item.batchNo) prod.batchNo = item.batchNo;
+        prod.status = prod.stock > (prod.minStock || 5) ? 'in_stock' : 'low_stock';
+        if (!prod.barcode || prod.barcode.trim() === '' || prod.barcode === prod.sku) {
+          prod.barcode = barcodeVal;
+        }
+      }
+
+      MemoryDb.barcodeRecords.unshift({
+        id: `bar-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        sku: item.sku,
+        productName: item.name || 'General Inventory Item',
+        barcodeValue: barcodeVal,
+        batchNo: item.batchNo || null,
+        format: 'code128',
+        template: 'retail_tag_1x2',
+        generatedAt: new Date().toISOString(),
+        printCount: Number(item.quantity) || 1,
+        branchId: updatedNote.branchId || null,
+        branchName: updatedNote.branchName || null,
+        grnNumber: updatedNote.grnNumber,
+        purchaseCost: Number(item.unitCost) || null,
+        sellingPrice: item.sellingPrice ? Number(item.sellingPrice) : null,
+      });
+
+      if (process.env.DATABASE_URL) {
+        try {
+          const dbProd = await prisma.product.findUnique({ where: { sku: item.sku } });
+          if (dbProd) {
+            const newStock = dbProd.stock + Number(item.quantity || 0);
+            const productUpdates: any = {
+              stock: newStock,
+              cost: item.unitCost ? Number(item.unitCost) : dbProd.cost,
+              price: item.sellingPrice ? Number(item.sellingPrice) : dbProd.price,
+              batchNo: item.batchNo || dbProd.batchNo,
+              status: newStock > (dbProd.minStock || 5) ? 'in_stock' : 'low_stock',
+              lastUpdated: new Date(),
+            };
+            if (!dbProd.barcode || dbProd.barcode.trim() === '' || dbProd.barcode === dbProd.sku) {
+              productUpdates.barcode = barcodeVal;
+            }
+            await prisma.product.update({
+              where: { sku: item.sku },
+              data: productUpdates,
+            });
+          }
+
+          await prisma.barcodeRecord.create({
+            data: {
+              id: `bar-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              sku: item.sku,
+              productName: item.name || 'General Inventory Item',
+              barcodeValue: barcodeVal,
+              batchNo: item.batchNo || null,
+              format: 'code128',
+              template: 'retail_tag_1x2',
+              generatedAt: new Date().toISOString(),
+              printCount: Number(item.quantity) || 1,
+              purchaseCost: Number(item.unitCost) || null,
+              sellingPrice: item.sellingPrice ? Number(item.sellingPrice) : null,
+            }
+          }).catch(() => {});
+        } catch (e) {}
       }
     });
   }

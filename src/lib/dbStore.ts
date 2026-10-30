@@ -15,4 +15,5 @@ export class MemoryDb {
   static zones: WarehouseZone[] = [];
   static eventAllocations: EventAllocation[] = [];
   static eventTransactions: EventTransaction[] = [];
+  static barcodeRecords: any[] = [];
 }

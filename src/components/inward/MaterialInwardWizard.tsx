@@ -72,7 +72,7 @@ export const MaterialInwardWizard: React.FC = () => {
   // Wizard Creation States
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [vendorName, setVendorName] = useState('');
-  const [poNumber, setPoNumber] = useState('');
+  const [poNumber, setPoNumber] = useState(() => `PO-2026-${Math.floor(100000 + Math.random() * 900000)}`);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [selectedZone, setSelectedZone] = useState(zones[0]?.name || 'Zone A — Main Retail Floor');
   const [grnNotes, setGrnNotes] = useState('');
@@ -284,7 +284,7 @@ export const MaterialInwardWizard: React.FC = () => {
                 setEditingDraftGrnNumber('');
                 setStep(1);
                 setVendorName('');
-                setPoNumber('');
+                setPoNumber(`PO-2026-${Math.floor(100000 + Math.random() * 900000)}`);
                 setGrnNotes('');
                 setItems([]);
                 setViewMode('create');
@@ -642,7 +642,7 @@ export const MaterialInwardWizard: React.FC = () => {
               onClick={() => {
                 setStep(1);
                 setVendorName('');
-                setPoNumber('');
+                setPoNumber(`PO-2026-${Math.floor(100000 + Math.random() * 900000)}`);
                 setGrnNotes('');
                 setItems([]);
                 setViewMode('create');
@@ -912,14 +912,21 @@ export const MaterialInwardWizard: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Purchase Order (PO) Number *</label>
-                  <input
-                    type="text"
-                    value={poNumber}
-                    onChange={e => setPoNumber(e.target.value)}
-                    placeholder="Enter PO number (e.g. PO-88941)..."
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-amber-600 dark:text-amber-400 font-semibold focus:ring-2 focus:ring-[#D97706] focus:outline-none"
-                  />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="font-semibold text-slate-700 dark:text-slate-300">Purchase Order (PO) Number *</label>
+                    <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Auto-Generated
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      readOnly
+                      disabled
+                      value={poNumber}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-amber-600 dark:text-amber-400 font-semibold cursor-not-allowed select-none"
+                    />
+                  </div>
                 </div>
 
                 <div>

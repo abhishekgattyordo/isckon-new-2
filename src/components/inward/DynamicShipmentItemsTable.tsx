@@ -594,14 +594,15 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
       {/* Clean Table Grid Container */}
       <div className="overflow-x-auto overflow-y-visible">
         <div className="min-w-[960px]">
-          {/* Explicit Table Column Headers (30% / 30% / 10% / 10% / 10% / 10%) */}
-          <div className="grid grid-cols-[30%_30%_10%_10%_10%_10%] gap-3 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono items-center">
-            <div>SKU SEARCH LOOKUP (30%)</div>
-            <div>PRODUCT DESCRIPTION / TITLE (30%)</div>
-            <div className="text-center">QTY (10%)</div>
-            <div className="text-right">UNIT COST ({currencySymbol}) (10%)</div>
-            <div className="text-center">TAX % (10%)</div>
-            <div className="text-right pr-10">TOTAL ({currencySymbol}) (10%)</div>
+          {/* Explicit Table Column Headers */}
+          <div className="grid grid-cols-[22%_22%_8%_10%_10%_8%_20%] gap-3 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono items-center">
+            <div>SKU SEARCH LOOKUP</div>
+            <div>PRODUCT DESCRIPTION / TITLE</div>
+            <div className="text-center">QTY</div>
+            <div className="text-right">UNIT COST ({currencySymbol})</div>
+            <div className="text-right">RETAIL PRICE ({currencySymbol})</div>
+            <div className="text-center">TAX %</div>
+            <div className="text-right pr-4">TOTAL ({currencySymbol})</div>
           </div>
 
           {/* Table Rows Body with min-height to ensure dropdown has plenty of space */}
@@ -612,11 +613,11 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
               return (
                 <div
                   key={row.id}
-                  className={`grid grid-cols-[30%_30%_10%_10%_10%_10%] gap-3 px-6 py-3.5 items-center hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors relative ${
+                  className={`grid grid-cols-[22%_22%_8%_10%_10%_8%_20%] gap-3 px-6 py-3.5 items-center hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors relative ${
                     isDropdownActive ? 'z-40' : 'z-10'
                   }`}
                 >
-                  {/* 1. SKU Search Input (30%) */}
+                  {/* 1. SKU Search Input (22%) */}
                   <div className="relative">
                     <SkuSearchLookup
                       value={row.sku}
@@ -629,7 +630,7 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
                     />
                   </div>
 
-                  {/* 2. Product Description / Title (30% - Read-only / Auto-filled) */}
+                  {/* 2. Product Description / Title (22%) */}
                   <div>
                     <input
                       type="text"
@@ -642,7 +643,7 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
                     />
                   </div>
 
-                  {/* 3. Qty (10%) */}
+                  {/* 3. Qty (8%) */}
                   <div>
                     <input
                       type="number"
@@ -675,7 +676,24 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
                     />
                   </div>
 
-                  {/* 5. Tax % (10%) */}
+                  {/* 5. Retail Price (10%) */}
+                  <div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      disabled={readOnly}
+                      value={row.sellingPrice}
+                      onChange={e => {
+                        const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                        handleRowChange(row.id, 'sellingPrice', isNaN(val as number) ? '' : val);
+                      }}
+                      className="w-full h-10.5 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400 text-right focus:outline-none focus:ring-2 focus:ring-[#D97706] focus:border-transparent transition-all disabled:opacity-60"
+                    />
+                  </div>
+
+                  {/* 6. Tax % (8%) */}
                   <div>
                     <select
                       disabled={readOnly}
@@ -693,7 +711,7 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
                     </select>
                   </div>
 
-                  {/* 6. Total (10%) & Delete Action Button */}
+                  {/* 7. Total (20%) & Delete Action Button */}
                   <div className="flex items-center justify-between pl-1">
                     <div className="font-mono font-black text-slate-900 dark:text-white text-xs sm:text-sm text-right flex-1 pr-2">
                       {currencySymbol}

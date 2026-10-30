@@ -347,12 +347,16 @@ export const ExecutiveDashboard: React.FC = () => {
         </div>
 
         {/* KPI 5 */}
-        <div className="p-4 rounded-2xl bg-white border border-[#E8E2D9] flex flex-col justify-between shadow-2xs">
+        <div
+          onClick={() => setActiveModule('products')}
+          className="p-4 rounded-2xl bg-white border border-[#E8E2D9] flex flex-col justify-between shadow-2xs hover:border-[#D97706] transition-all cursor-pointer group"
+          title="Open Product Catalog"
+        >
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center text-[#D97706]">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 group-hover:bg-amber-100/80 flex items-center justify-center text-[#D97706] transition-colors">
               <Package className="w-4 h-4" />
             </div>
-            <span className="text-[11px] font-bold text-[#786C65] uppercase">Inventory Value</span>
+            <span className="text-[11px] font-bold text-[#786C65] uppercase group-hover:text-[#D97706] transition-colors">Inventory Value</span>
           </div>
           <div className="mt-3.5 space-y-0.5">
             {isInitialLoading ? (
@@ -365,7 +369,10 @@ export const ExecutiveDashboard: React.FC = () => {
             {isInitialLoading ? (
               <div className="h-3 w-24 bg-gray-100 dark:bg-gray-800 animate-pulse rounded mt-1" />
             ) : (
-              <p className="text-[10px] text-[#15803D] font-bold font-mono">{products.length} SKUs in stock</p>
+              <p className="text-[10px] text-[#15803D] font-bold font-mono group-hover:underline flex items-center justify-between">
+                <span>{products.length} SKUs in stock</span>
+                <span className="text-amber-700 text-[10px] font-sans font-semibold">View Catalog &rarr;</span>
+              </p>
             )}
           </div>
         </div>
