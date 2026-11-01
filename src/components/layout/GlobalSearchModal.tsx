@@ -160,7 +160,7 @@ export const GlobalSearchModal: React.FC = () => {
                     className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer transition-all group"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <img src={prod.imageUrl} alt={prod.name} className="w-8 h-8 rounded-lg object-cover bg-slate-100" />
+                      <img src={prod.imageUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=100&auto=format&fit=crop&q=80'} alt={prod.name} className="w-8 h-8 rounded-lg object-cover bg-slate-100" />
                       <div className="min-w-0">
                         <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate">
                           {prod.name}

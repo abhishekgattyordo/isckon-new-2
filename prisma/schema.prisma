@@ -224,6 +224,26 @@ model BarcodeRecord {
   @@map("barcode_records")
 }
 
+model InventoryBatch {
+  id                String   @id
+  sku               String
+  batchNo           String   @map("batch_no")
+  receivedDate      String   @map("received_date")
+  edition           String?
+  costPrice         Float    @map("cost_price")
+  sellingPrice      Float    @map("selling_price")
+  totalQuantity     Int      @map("total_quantity")
+  remainingQuantity Int      @map("remaining_quantity")
+  status            String   @default("in_stock")
+  grnNumber         String?  @map("grn_number")
+  branchId          String?  @map("branch_id")
+  branchName        String?  @map("branch_name")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("inventory_batches")
+}
+
+
 model SystemSetting {
   id             String   @id @default("settings")
   logoUrl        String?  @map("logo_url")

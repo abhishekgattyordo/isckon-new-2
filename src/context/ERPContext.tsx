@@ -41,7 +41,7 @@ import {
   INITIAL_SUPPLIERS
 } from '../data/initialData';
 import { GLOBAL_ALL_BRANCHES, isSuperAdmin, isBranchAdmin, getDefaultPermissionsForRole } from '../lib/authUtils';
-import { isProductInZone } from '../lib/warehouseUtils';
+import { isProductInZone, allocateFifoCartItems, getActiveBatchPrice } from '../lib/warehouseUtils';
 import { generateEan13Barcode } from '../lib/barcodeUtils';
 
 interface ERPContextType {
@@ -99,8 +99,8 @@ interface ERPContextType {
   deleteUser: (id: string) => void;
   cart: CartItem[];
   addToCart: (product: Product, quantity?: number, batchId?: string) => void;
-  removeFromCart: (productId: string) => void;
-  updateCartQuantity: (productId: string, quantity: number) => void;
+  removeFromCart: (productId: string, batchId?: string) => void;
+  updateCartQuantity: (productId: string, quantity: number, batchId?: string) => void;
   updateCartDiscount: (productId: string, discount: number) => void;
   clearCart: () => void;
   isSearchModalOpen: boolean;
@@ -839,7 +839,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const isSuper = isSuperAdmin(user);
         const userFetchUrl = isSuper || !bId || bId === 'all-branches' ? '/api/users' : `/api/users${branchQuery}`;
 
-        const [auditRes, productsRes, inwardRes, ordersRes, eventsRes, usersRes, recycleRes, branchesRes] = await Promise.all([
+        const [auditRes, productsRes, inwardRes, ordersRes, eventsRes, usersRes, recycleRes, branchesRes, barcodesRes, batchesRes] = await Promise.all([
           fetch(`/api/audit${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
           fetch(`/api/products${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
           fetch(`/api/inward${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
@@ -847,7 +847,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           fetch(`/api/events${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
           fetch(userFetchUrl, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
           fetch('/api/recycle-bin').then(r => r.json()).catch(() => ({ success: false })),
-          fetch('/api/branches').then(r => r.json()).catch(() => ({ success: false }))
+          fetch('/api/branches').then(r => r.json()).catch(() => ({ success: false })),
+          fetch(`/api/barcodes${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
+          fetch(`/api/batches${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false }))
         ]);
 
         if (fetchId !== activeFetchIdRef.current) {
@@ -915,6 +917,20 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (recycleRes.success && Array.isArray(recycleRes.items)) {
           setRecycleBinItems(recycleRes.items);
+        }
+
+        if (barcodesRes.success && Array.isArray(barcodesRes.barcodes)) {
+          setBarcodes(barcodesRes.barcodes);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_barcodes', JSON.stringify(barcodesRes.barcodes));
+          }
+        }
+
+        if (batchesRes.success && Array.isArray(batchesRes.batches) && batchesRes.batches.length > 0) {
+          setBatches(batchesRes.batches);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_batches', JSON.stringify(batchesRes.batches));
+          }
         }
 
         const dbConnected = productsRes.dbConnected || inwardRes.dbConnected || ordersRes.dbConnected || eventsRes.dbConnected;
@@ -1351,21 +1367,30 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 ? uniqueBarcodeVal
                 : p.barcode;
 
-              // Sync barcode back to server if it was previously empty or set to sku
-              if (finalBarcode !== p.barcode) {
-                fetch('/api/products', {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ id: p.id, updates: { barcode: finalBarcode, stock: newStock } })
-                }).catch(() => {});
-              }
+              const newCost = item.unitCost > 0 ? item.unitCost : p.cost;
+              const newPrice = p.price;
+
+              fetch('/api/products', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  id: p.id,
+                  updates: {
+                    barcode: finalBarcode,
+                    stock: newStock,
+                    cost: newCost,
+                    price: newPrice,
+                    batchNo: item.batchNo || p.batchNo
+                  }
+                })
+              }).catch(() => {});
 
               return {
                 ...p,
                 stock: newStock,
                 cost: item.unitCost > 0 ? item.unitCost : p.cost,
-                price: item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : p.price,
-                batchNo: item.batchNo || p.batchNo,
+                price: newPrice,
+                batchNo: p.batchNo || item.batchNo,
                 barcode: finalBarcode,
                 status: newStock <= p.minStock ? 'low_stock' : 'in_stock',
                 lastUpdated: new Date().toISOString()
@@ -1464,6 +1489,26 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `GRN receipt processed by ${user.name} for vendor "${newNote.vendorName}" at branch "${newNote.branchName}". Total value: ₹${newNote.totalValue}. Items received: ${newNote.items.map(i => `${i.name} (${i.quantity} units, Batch: ${i.batchNo})`).join(', ')}.`
     );
 
+    // Fetch latest authoritative batches and products from server to keep POS & catalog in sync
+    try {
+      const [bRes, pRes] = await Promise.all([
+        fetch('/api/batches').then(r => r.json()),
+        fetch('/api/products').then(r => r.json())
+      ]);
+      if (bRes.success && Array.isArray(bRes.batches) && bRes.batches.length > 0) {
+        setBatches(bRes.batches);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('iskcon_erp_batches', JSON.stringify(bRes.batches));
+        }
+      }
+      if (pRes.success && Array.isArray(pRes.products) && pRes.products.length > 0) {
+        setAllProducts(pRes.products);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('iskcon_erp_all_products', JSON.stringify(pRes.products));
+        }
+      }
+    } catch (e) {}
+
     quickNotification('GRN Created Successfully', `Document ${newNote.grnNumber} processed for branch ${newNote.branchName}.`, 'success');
   };
 
@@ -1508,11 +1553,28 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return prev.map(p => {
               if ((p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase()) {
                 const newStock = p.stock + item.quantity;
+                const newCost = item.unitCost > 0 ? item.unitCost : p.cost;
+                const newPrice = p.price;
+
+                fetch('/api/products', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    id: p.id,
+                    updates: {
+                      stock: newStock,
+                      cost: newCost,
+                      price: newPrice,
+                      batchNo: item.batchNo || p.batchNo
+                    }
+                  })
+                }).catch(() => {});
+
                 return {
                   ...p,
                   stock: newStock,
-                  cost: item.unitCost > 0 ? item.unitCost : p.cost,
-                  price: item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : p.price,
+                  cost: newCost,
+                  price: newPrice,
                   batchNo: item.batchNo || p.batchNo,
                   status: newStock <= p.minStock ? 'low_stock' : 'in_stock',
                   lastUpdated: new Date().toISOString()
@@ -1563,6 +1625,26 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         grnNum,
         `Draft GRN ${grnNum} finalized and committed by ${user.name} for vendor "${vendor}".`
       );
+
+      // Fetch latest authoritative batches and products from server to keep POS & catalog in sync
+      try {
+        const [bRes, pRes] = await Promise.all([
+          fetch('/api/batches').then(r => r.json()),
+          fetch('/api/products').then(r => r.json())
+        ]);
+        if (bRes.success && Array.isArray(bRes.batches) && bRes.batches.length > 0) {
+          setBatches(bRes.batches);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_batches', JSON.stringify(bRes.batches));
+          }
+        }
+        if (pRes.success && Array.isArray(pRes.products) && pRes.products.length > 0) {
+          setAllProducts(pRes.products);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_all_products', JSON.stringify(pRes.products));
+          }
+        }
+      } catch (e) {}
 
       quickNotification('GRN Finalized & Committed', `Draft ${grnNum} successfully committed to inventory.`, 'success');
     } else {
@@ -1648,52 +1730,80 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       body: JSON.stringify(newOrder)
     }).catch(e => console.warn('Could not post POS order:', e));
 
-    // Deduct stock
-    newOrder.items.forEach(cartItem => {
-      // FIFO Batch-wise inventory tracking deduction
-      setBatches(prevBatches => {
-        const skuBatches = prevBatches
-          .filter(b => b.sku === cartItem.product.sku && b.remainingQuantity > 0)
-          .sort((a, b) => a.receivedDate.localeCompare(b.receivedDate));
+    // Deduct inventory batches in FIFO order
+    setBatches(prevBatches => {
+      let updatedBatches = [...prevBatches];
 
-        let qtyNeeded = cartItem.quantity;
-        const deductions: Record<string, number> = {};
+      for (const cartItem of newOrder.items) {
+        let qtyToDeduct = cartItem.quantity;
 
-        for (const batch of skuBatches) {
-          if (qtyNeeded <= 0) break;
-          const toDeduct = Math.min(batch.remainingQuantity, qtyNeeded);
-          deductions[batch.id] = batch.remainingQuantity - toDeduct;
-          qtyNeeded -= toDeduct;
-        }
-
-        return prevBatches.map(b => {
-          if (b.id in deductions) {
-            const rem = deductions[b.id];
-            return {
+        // 1. If batchId is specified on cartItem, deduct from that batch first
+        if (cartItem.batchId) {
+          const target = updatedBatches.find(b => b.id === cartItem.batchId);
+          if (target && target.remainingQuantity > 0) {
+            const take = Math.min(qtyToDeduct, target.remainingQuantity);
+            const rem = target.remainingQuantity - take;
+            updatedBatches = updatedBatches.map(b => b.id === target.id ? {
               ...b,
               remainingQuantity: rem,
-              status: rem === 0 ? 'out_of_stock' : rem <= 5 ? 'low_stock' : 'in_stock' as 'in_stock' | 'low_stock' | 'out_of_stock'
-            };
+              status: rem === 0 ? 'out_of_stock' : rem <= 5 ? 'low_stock' : 'in_stock'
+            } : b);
+            qtyToDeduct -= take;
           }
-          return b;
-        });
+        }
+
+        // 2. If remaining, deduct in strict FIFO order
+        if (qtyToDeduct > 0) {
+          const normSku = (cartItem.product.sku || '').trim().toUpperCase();
+          const activeSkuBatches = updatedBatches
+            .filter(b => (b.sku || '').trim().toUpperCase() === normSku && b.remainingQuantity > 0)
+            .sort((a, b) => {
+              const dComp = (a.receivedDate || '').localeCompare(b.receivedDate || '');
+              if (dComp !== 0) return dComp;
+              return (a.id || a.batchNo || '').localeCompare(b.id || b.batchNo || '');
+            });
+
+          for (const batch of activeSkuBatches) {
+            if (qtyToDeduct <= 0) break;
+            const take = Math.min(qtyToDeduct, batch.remainingQuantity);
+            const rem = batch.remainingQuantity - take;
+            updatedBatches = updatedBatches.map(b => b.id === batch.id ? {
+              ...b,
+              remainingQuantity: rem,
+              status: rem === 0 ? 'out_of_stock' : rem <= 5 ? 'low_stock' : 'in_stock'
+            } : b);
+            qtyToDeduct -= take;
+          }
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('iskcon_erp_batches', JSON.stringify(updatedBatches));
+      }
+      return updatedBatches;
+    });
+
+    // Deduct product stock
+    setProducts(prev => {
+      const stockDeductions: Record<string, number> = {};
+      for (const cartItem of newOrder.items) {
+        stockDeductions[cartItem.product.id] = (stockDeductions[cartItem.product.id] || 0) + cartItem.quantity;
+      }
+      return prev.map(p => {
+        if (p.id in stockDeductions) {
+          const newStock = Math.max(0, p.stock - stockDeductions[p.id]);
+          return {
+            ...p,
+            stock: newStock,
+            status: newStock === 0 ? 'out_of_stock' : newStock <= p.minStock ? 'low_stock' : 'in_stock'
+          };
+        }
+        return p;
       });
+    });
 
-      setProducts(prev =>
-        prev.map(p => {
-          if (p.id === cartItem.product.id) {
-            const newStock = Math.max(0, p.stock - cartItem.quantity);
-            return {
-              ...p,
-              stock: newStock,
-              status: newStock === 0 ? 'out_of_stock' : newStock <= p.minStock ? 'low_stock' : 'in_stock'
-            };
-          }
-          return p;
-        })
-      );
-
-      // Add movement
+    // Add movement
+    newOrder.items.forEach(cartItem => {
       const mov: StockMovement = {
         id: `mov-${Date.now()}-${Math.random()}`,
         type: 'pos_sale',
@@ -1796,64 +1906,109 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addToCart = (product: Product, quantity = 1, batchId?: string) => {
-    let selectedBatch: InventoryBatch | undefined;
-    if (batchId) {
-      selectedBatch = batches.find(b => b.id === batchId);
-    } else {
-      const activeBatches = batches
-        .filter(b => b.sku === product.sku && b.remainingQuantity > 0)
-        .sort((a, b) => a.receivedDate.localeCompare(b.receivedDate));
-      if (activeBatches.length > 0) {
-        selectedBatch = activeBatches[0]; // Oldest active batch (FIFO priority)
-      }
+  const addToCart = (product: Product, quantity = 1, requestedBatchId?: string) => {
+    const availableStock = product.stock ?? 999;
+    const existingTotalInCart = cart
+      .filter(item => item.product.id === product.id)
+      .reduce((sum, item) => sum + item.quantity, 0);
+
+    if (existingTotalInCart + quantity > availableStock) {
+      quickNotification('Stock Limit Reached', `Cannot exceed available stock of ${availableStock}`, 'warning');
+      return;
     }
 
-    const priceToUse = selectedBatch ? selectedBatch.sellingPrice : product.price;
-    const costToUse = selectedBatch ? selectedBatch.costPrice : product.cost;
-    const batchNoToUse = selectedBatch ? selectedBatch.batchNo : product.batchNo;
-    const resolvedBatchId = selectedBatch ? selectedBatch.id : undefined;
-
-    const batchScopedProduct: Product = {
-      ...product,
-      price: priceToUse,
-      cost: costToUse,
-      batchNo: batchNoToUse || product.batchNo
-    };
-
     setCart(prev => {
-      const existing = prev.find(item => item.product.id === product.id && item.batchId === resolvedBatchId);
-      if (existing) {
-        return prev.map(item =>
-          item.product.id === product.id && item.batchId === resolvedBatchId
-            ? { ...item, quantity: item.quantity + quantity }
-            : item
-        );
+      // 1. If explicit batch was requested (e.g. from scanning a batch barcode)
+      if (requestedBatchId) {
+        const targetBatch = batches.find(b => b.id === requestedBatchId);
+        if (targetBatch) {
+          const batchScopedProduct: Product = {
+            ...product,
+            price: targetBatch.sellingPrice,
+            cost: targetBatch.costPrice,
+            batchNo: targetBatch.batchNo
+          };
+          const existingIndex = prev.findIndex(item => item.product.id === product.id && item.batchId === requestedBatchId);
+          if (existingIndex !== -1) {
+            const updated = [...prev];
+            updated[existingIndex] = {
+              ...updated[existingIndex],
+              quantity: updated[existingIndex].quantity + quantity
+            };
+            return updated;
+          } else {
+            return [...prev, {
+              product: batchScopedProduct,
+              quantity,
+              discountPercent: 0,
+              batchId: targetBatch.id,
+              batchNumber: targetBatch.batchNo,
+              costPrice: targetBatch.costPrice,
+              sellingPrice: targetBatch.sellingPrice
+            }];
+          }
+        }
       }
-      return [...prev, {
-        product: batchScopedProduct,
-        quantity,
+
+      // 2. Standard FIFO allocation across batches (oldest batch first)
+      const targetTotal = existingTotalInCart + quantity;
+      const otherCartItems = prev.filter(item => item.product.id !== product.id);
+      const allocatedBatches = allocateFifoCartItems(product, targetTotal, batches);
+
+      const newItems: CartItem[] = allocatedBatches.map(alloc => ({
+        product: alloc.batchProduct,
+        quantity: alloc.quantity,
         discountPercent: 0,
-        batchId: resolvedBatchId,
-        batchNumber: batchNoToUse,
-        costPrice: costToUse,
-        sellingPrice: priceToUse
-      }];
+        batchId: alloc.batchId,
+        batchNumber: alloc.batchNumber,
+        costPrice: alloc.costPrice,
+        sellingPrice: alloc.sellingPrice
+      }));
+
+      return [...otherCartItems, ...newItems];
     });
   };
 
-  const removeFromCart = (productId: string) => {
-    setCart(prev => prev.filter(item => item.product.id !== productId));
+  const removeFromCart = (productId: string, batchId?: string) => {
+    setCart(prev => {
+      if (batchId) {
+        return prev.filter(item => !(item.product.id === productId && item.batchId === batchId));
+      }
+      return prev.filter(item => item.product.id !== productId);
+    });
   };
 
-  const updateCartQuantity = (productId: string, quantity: number) => {
+  const updateCartQuantity = (productId: string, quantity: number, batchId?: string) => {
     if (quantity <= 0) {
-      removeFromCart(productId);
+      removeFromCart(productId, batchId);
       return;
     }
-    setCart(prev =>
-      prev.map(item => (item.product.id === productId ? { ...item, quantity } : item))
-    );
+    const productObj = products.find(p => p.id === productId);
+    const maxStock = productObj?.stock ?? 999;
+    if (quantity > maxStock) {
+      quickNotification('Stock Limit Reached', `Cannot exceed available stock of ${maxStock}`, 'warning');
+      return;
+    }
+
+    setCart(prev => {
+      const targetProduct = productObj || prev.find(item => item.product.id === productId)?.product;
+      if (!targetProduct) return prev;
+
+      const otherItems = prev.filter(item => item.product.id !== productId);
+      const allocatedBatches = allocateFifoCartItems(targetProduct, quantity, batches);
+
+      const newItems: CartItem[] = allocatedBatches.map(alloc => ({
+        product: alloc.batchProduct,
+        quantity: alloc.quantity,
+        discountPercent: 0,
+        batchId: alloc.batchId,
+        batchNumber: alloc.batchNumber,
+        costPrice: alloc.costPrice,
+        sellingPrice: alloc.sellingPrice
+      }));
+
+      return [...otherItems, ...newItems];
+    });
   };
 
   const updateCartDiscount = (productId: string, discount: number) => {

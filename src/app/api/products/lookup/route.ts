@@ -77,11 +77,34 @@ export async function GET(req: NextRequest) {
       if (barcodeRecord) {
         console.log(`[BARCODE LOOKUP API] Found custom barcode record. Mapping barcode value "${cleanInput}" to SKU "${barcodeRecord.sku}"...`);
         dbProduct = await prisma.product.findFirst({
-          where: { sku: { equals: barcodeRecord.sku, mode: 'insensitive' } }
+          where: {
+            OR: [
+              { sku: { equals: barcodeRecord.sku, mode: 'insensitive' } },
+              { sku: { contains: barcodeRecord.sku, mode: 'insensitive' } }
+            ]
+          }
         });
 
+        if (!dbProduct && barcodeRecord.sku) {
+          dbProduct = {
+            id: `prod-bc-${barcodeRecord.sku}`,
+            sku: barcodeRecord.sku,
+            name: barcodeRecord.productName || 'Inventory Product',
+            category: 'General Merchandise',
+            price: Number(barcodeRecord.sellingPrice || 100),
+            cost: Number(barcodeRecord.purchaseCost || 50),
+            stock: 100,
+            minStock: 5,
+            warehouseZone: 'Zone A',
+            batchNo: barcodeRecord.batchNo || '',
+            barcode: barcodeRecord.barcodeValue,
+            status: 'in_stock',
+            lastUpdated: new Date()
+          } as any;
+        }
+
         if (dbProduct) {
-          console.log(`[BARCODE LOOKUP API] SUCCESS: Found custom barcode match in Products. ID: ${dbProduct.id}, SKU: ${dbProduct.sku}, Name: "${dbProduct.name}"`);
+          console.log(`[BARCODE LOOKUP API] SUCCESS: Found custom barcode match. ID: ${dbProduct.id}, SKU: ${dbProduct.sku}, Name: "${dbProduct.name}"`);
           const mappedProduct = mapDbProduct(dbProduct);
           console.log(`[BARCODE LOOKUP API] API Response: { success: true, type: 'product', item: "${mappedProduct.name}" }`);
           console.log(`=================== [BARCODE LOOKUP BACKEND END] ===================\n`);

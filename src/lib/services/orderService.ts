@@ -68,6 +68,8 @@ export async function getOrders(branchId?: string): Promise<POSOrder[]> {
   return list;
 }
 
+import { deductBatchesInTransaction, deductBatchesInMemory } from './batchService';
+
 export async function createOrder(orderData: any): Promise<POSOrder> {
   const newOrder: POSOrder = {
     ...orderData,
@@ -78,60 +80,92 @@ export async function createOrder(orderData: any): Promise<POSOrder> {
 
   try {
     if (process.env.DATABASE_URL) {
-      const dbOrder = await prisma.pOSOrder.create({
-        data: {
-          id: newOrder.id,
-          orderNumber: newOrder.orderNumber,
-          subtotal: Number(newOrder.subtotal),
-          discountAmount: Number(newOrder.discountAmount),
-          taxAmount: Number(newOrder.taxAmount),
-          total: Number(newOrder.total),
-          paymentMethod: newOrder.paymentMethod,
-          timestamp: newOrder.timestamp,
-          cashierName: newOrder.cashierName,
-          branchId: newOrder.branchId,
-          branchName: newOrder.branchName,
-          customerPhone: newOrder.customerPhone,
-          customerName: newOrder.customerName,
-          salesTag: newOrder.salesTag,
-          upiId: newOrder.upiId,
-          items: {
-            create: newOrder.items.map(item => ({
-              productId: item.product.id,
-              productSku: item.product.sku,
-              productName: item.product.name,
-              productCategory: item.product.category,
-              productPrice: Number(item.product.price),
-              quantity: Number(item.quantity),
-              discountPercent: Number(item.discountPercent),
-              customNote: item.customNote,
-            })),
-          },
-        },
-        include: { items: true },
-      });
-
-      // Deduct product stock
-      if (newOrder.items && Array.isArray(newOrder.items)) {
-        for (const cartItem of newOrder.items) {
-          const prod = await prisma.product.findFirst({
-            where: {
-              OR: [
-                { id: cartItem.product?.id },
-                { sku: cartItem.product?.sku }
-              ]
-            }
-          });
-          if (prod) {
-            await prisma.product.update({
-              where: { id: prod.id },
-              data: {
-                stock: Math.max(0, prod.stock - Number(cartItem.quantity)),
-              },
+      const dbOrder = await prisma.$transaction(async (tx) => {
+        // Validate stock before selling
+        if (newOrder.items && Array.isArray(newOrder.items)) {
+          for (const cartItem of newOrder.items) {
+            const prod = await tx.product.findFirst({
+              where: {
+                OR: [
+                  { id: cartItem.product?.id },
+                  { sku: cartItem.product?.sku }
+                ]
+              }
             });
+            if (prod && prod.stock < Number(cartItem.quantity)) {
+              throw new Error(`Insufficient stock for ${prod.name || prod.sku}. Available: ${prod.stock}, requested: ${cartItem.quantity}`);
+            }
           }
         }
-      }
+
+        const createdOrder = await tx.pOSOrder.create({
+          data: {
+            id: newOrder.id,
+            orderNumber: newOrder.orderNumber,
+            subtotal: Number(newOrder.subtotal),
+            discountAmount: Number(newOrder.discountAmount),
+            taxAmount: Number(newOrder.taxAmount),
+            total: Number(newOrder.total),
+            paymentMethod: newOrder.paymentMethod,
+            timestamp: newOrder.timestamp,
+            cashierName: newOrder.cashierName,
+            branchId: newOrder.branchId,
+            branchName: newOrder.branchName,
+            customerPhone: newOrder.customerPhone,
+            customerName: newOrder.customerName,
+            salesTag: newOrder.salesTag,
+            upiId: newOrder.upiId,
+            items: {
+              create: newOrder.items.map(item => ({
+                productId: item.product.id,
+                productSku: item.product.sku,
+                productName: item.product.name,
+                productCategory: item.product.category,
+                productPrice: Number(item.sellingPrice ?? item.product.price),
+                quantity: Number(item.quantity),
+                discountPercent: Number(item.discountPercent),
+                customNote: item.customNote,
+              })),
+            },
+          },
+          include: { items: true },
+        });
+
+        // Deduct inventory batches in FIFO order inside this transaction
+        if (newOrder.items && Array.isArray(newOrder.items)) {
+          const batchDeductionItems = newOrder.items.map(item => ({
+            sku: item.product.sku,
+            quantity: Number(item.quantity),
+            batchId: item.batchId || undefined
+          }));
+          await deductBatchesInTransaction(tx, batchDeductionItems);
+
+          // Deduct product master stock
+          for (const cartItem of newOrder.items) {
+            const prod = await tx.product.findFirst({
+              where: {
+                OR: [
+                  { id: cartItem.product?.id },
+                  { sku: cartItem.product?.sku }
+                ]
+              }
+            });
+            if (prod) {
+              const newStock = Math.max(0, prod.stock - Number(cartItem.quantity));
+              await tx.product.update({
+                where: { id: prod.id },
+                data: {
+                  stock: newStock,
+                  status: newStock === 0 ? 'out_of_stock' : newStock <= (prod.minStock || 5) ? 'low_stock' : 'in_stock',
+                  lastUpdated: new Date()
+                },
+              });
+            }
+          }
+        }
+
+        return createdOrder;
+      });
 
       return {
         ...dbOrder,
@@ -162,21 +196,30 @@ export async function createOrder(orderData: any): Promise<POSOrder> {
       } as unknown as POSOrder;
     }
   } catch (error) {
-    console.warn('Prisma createOrder failed, saving to MemoryDb:', error);
+    console.warn('Prisma createOrder failed or rolled back, saving to MemoryDb:', error);
   }
 
   // Fallback to MemoryDb
   MemoryDb.orders.unshift(newOrder);
 
-  // Deduct stock for sold items in MemoryDb
+  // Deduct batches and stock for sold items in MemoryDb
   if (newOrder.items && Array.isArray(newOrder.items)) {
+    const batchDeductionItems = newOrder.items.map(item => ({
+      sku: item.product.sku,
+      quantity: Number(item.quantity),
+      batchId: item.batchId || undefined
+    }));
+    deductBatchesInMemory(batchDeductionItems);
+
     newOrder.items.forEach((cartItem: any) => {
       const prod = MemoryDb.products.find(p => p.id === cartItem.product?.id || p.sku === cartItem.product?.sku);
       if (prod) {
         prod.stock = Math.max(0, prod.stock - Number(cartItem.quantity));
+        prod.status = prod.stock === 0 ? 'out_of_stock' : prod.stock <= (prod.minStock || 5) ? 'low_stock' : 'in_stock';
       }
     });
   }
 
   return newOrder;
 }
+

@@ -33,6 +33,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { generateEan13Barcode } from '../../lib/barcodeUtils';
+import { getEffectiveProductPrice, getEffectiveBatchNo } from '../../lib/warehouseUtils';
 
 interface CategorySearchDropdownProps {
   value: string;
@@ -733,7 +734,9 @@ export const ProductManagement: React.FC = () => {
                 ) : (
                   filteredProducts.map(prod => {
                     const isSelected = selectedIds.includes(prod.id);
-                    const margin = Math.round(((prod.price - prod.cost) / prod.price) * 100);
+                    const effectivePrice = getEffectiveProductPrice(prod, batches);
+                    const effectiveBatchNo = getEffectiveBatchNo(prod, batches);
+                    const margin = Math.round(((effectivePrice - prod.cost) / effectivePrice) * 100);
 
                     return (
                       <tr
@@ -756,7 +759,7 @@ export const ProductManagement: React.FC = () => {
                         <td className="p-4 sm:p-5 border-r border-b border-[#E5E7EB] dark:border-slate-800 font-medium">
                           <div className="flex items-center gap-3 min-w-0">
                             <img
-                              src={prod.imageUrl}
+                              src={prod.imageUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=150&auto=format&fit=crop&q=80'}
                               alt={prod.name}
                               className="w-10 h-10 rounded-xl object-cover bg-slate-100 dark:bg-slate-800 shrink-0 border border-slate-200/50 dark:border-slate-700/50"
                             />
@@ -779,7 +782,7 @@ export const ProductManagement: React.FC = () => {
                         </td>
                         <td className="p-4 sm:p-5 border-r border-b border-[#E5E7EB] dark:border-slate-800">
                           <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-slate-900 dark:text-white truncate">₹{prod.price.toFixed(2)}</span>
+                            <span className="font-bold text-slate-900 dark:text-white truncate">₹{effectivePrice.toFixed(2)}</span>
                             <span className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[10px] font-mono font-bold shrink-0 border border-indigo-200/60 dark:border-indigo-800/60">
                               {prod.taxRate ?? 5}% GST
                             </span>
@@ -806,7 +809,7 @@ export const ProductManagement: React.FC = () => {
                           <div className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate" title={prod.warehouseZone}>
                             {prod.warehouseZone.split('—')[0]}
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5 truncate">Batch: {prod.batchNo}</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5 truncate">Batch: {effectiveBatchNo}</div>
                         </td>
                         <td className="p-4 sm:p-5 border-b border-[#E5E7EB] dark:border-slate-800 text-right">
                           <div className="flex items-center justify-end gap-1">
@@ -847,7 +850,9 @@ export const ProductManagement: React.FC = () => {
         /* Grid Cards View */
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {filteredProducts.map(prod => {
-            const margin = Math.round(((prod.price - prod.cost) / prod.price) * 100);
+            const effectivePrice = getEffectiveProductPrice(prod, batches);
+            const effectiveBatchNo = getEffectiveBatchNo(prod, batches);
+            const margin = Math.round(((effectivePrice - prod.cost) / effectivePrice) * 100);
             const isSelected = selectedIds.includes(prod.id);
 
             return (
@@ -862,7 +867,7 @@ export const ProductManagement: React.FC = () => {
                 <div>
                   <div className="relative aspect-video w-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                     <img
-                      src={prod.imageUrl}
+                      src={prod.imageUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=150&auto=format&fit=crop&q=80'}
                       alt={prod.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
@@ -896,7 +901,7 @@ export const ProductManagement: React.FC = () => {
                     <div className="pt-2 flex items-baseline justify-between border-t border-slate-100 dark:border-slate-800">
                       <div>
                         <div className="flex items-center gap-1.5">
-                          <span className="text-lg font-bold text-slate-900 dark:text-white">₹{prod.price.toFixed(2)}</span>
+                          <span className="text-lg font-bold text-slate-900 dark:text-white">₹{effectivePrice.toFixed(2)}</span>
                           <span className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[9px] font-mono font-bold border border-indigo-200/60 dark:border-indigo-800/60">
                             {prod.taxRate ?? 5}% GST
                           </span>
@@ -913,7 +918,7 @@ export const ProductManagement: React.FC = () => {
                 </div>
 
                 <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                  <span className="text-[10px] text-slate-400">Batch: {prod.batchNo}</span>
+                  <span className="text-[10px] text-slate-400">Batch: {effectiveBatchNo}</span>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setViewingBatchesProduct(prod)}

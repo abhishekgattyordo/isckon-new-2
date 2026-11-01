@@ -173,8 +173,8 @@ export async function createInwardNote(noteData: Omit<MaterialInwardNote, 'id'>)
               const productUpdates: any = {
                 stock: newStock,
                 cost: item.unitCost != null ? Number(item.unitCost) : prod.cost,
-                price: item.sellingPrice != null ? Number(item.sellingPrice) : prod.price,
-                batchNo: item.batchNo || prod.batchNo,
+                price: prod.price,
+                batchNo: prod.batchNo || item.batchNo,
                 status: newStock > (prod.minStock || 5) ? 'in_stock' : 'low_stock',
                 lastUpdated: new Date(),
               };
@@ -221,6 +221,25 @@ export async function createInwardNote(noteData: Omit<MaterialInwardNote, 'id'>)
                 purchaseCost: Number(item.unitCost) || null,
                 sellingPrice: item.sellingPrice != null ? Number(item.sellingPrice) : null,
               }
+            }).catch(() => {});
+
+            const batchNoVal = item.batchNo || `BAT-${newNote.invoiceDate ? newNote.invoiceDate.slice(0, 4) : new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+            const sellingPriceVal = item.sellingPrice != null && Number(item.sellingPrice) > 0 ? Number(item.sellingPrice) : (Number(item.unitCost) * 1.5);
+            await tx.inventoryBatch.create({
+              data: {
+                id: `bat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                sku: item.sku,
+                batchNo: batchNoVal,
+                receivedDate: newNote.invoiceDate || new Date().toISOString().slice(0, 10),
+                costPrice: Number(item.unitCost) || 0,
+                sellingPrice: sellingPriceVal,
+                totalQuantity: Number(item.quantity),
+                remainingQuantity: Number(item.quantity),
+                status: 'in_stock',
+                grnNumber: newNote.grnNumber,
+                branchId: newNote.branchId,
+                branchName: newNote.branchName,
+              }
             });
           }
         }
@@ -249,7 +268,6 @@ export async function createInwardNote(noteData: Omit<MaterialInwardNote, 'id'>)
       if (prod) {
         prod.stock += Number(item.quantity);
         if (item.unitCost) prod.cost = Number(item.unitCost);
-        if (item.sellingPrice) prod.price = Number(item.sellingPrice);
         if (item.batchNo) prod.batchNo = item.batchNo;
         prod.status = prod.stock > (prod.minStock || 5) ? 'in_stock' : 'low_stock';
         if (!prod.barcode || prod.barcode.trim() === '' || prod.barcode === prod.sku) {
@@ -328,7 +346,6 @@ export async function updateInwardNoteService(id: string, updates: Partial<Mater
       if (prod) {
         prod.stock += Number(item.quantity || 0);
         if (item.unitCost) prod.cost = Number(item.unitCost);
-        if (item.sellingPrice) prod.price = Number(item.sellingPrice);
         if (item.batchNo) prod.batchNo = item.batchNo;
         prod.status = prod.stock > (prod.minStock || 5) ? 'in_stock' : 'low_stock';
         if (!prod.barcode || prod.barcode.trim() === '' || prod.barcode === prod.sku) {
@@ -361,8 +378,8 @@ export async function updateInwardNoteService(id: string, updates: Partial<Mater
             const productUpdates: any = {
               stock: newStock,
               cost: item.unitCost ? Number(item.unitCost) : dbProd.cost,
-              price: item.sellingPrice ? Number(item.sellingPrice) : dbProd.price,
-              batchNo: item.batchNo || dbProd.batchNo,
+              price: dbProd.price,
+              batchNo: dbProd.batchNo || item.batchNo,
               status: newStock > (dbProd.minStock || 5) ? 'in_stock' : 'low_stock',
               lastUpdated: new Date(),
             };
@@ -388,6 +405,25 @@ export async function updateInwardNoteService(id: string, updates: Partial<Mater
               printCount: Number(item.quantity) || 1,
               purchaseCost: Number(item.unitCost) || null,
               sellingPrice: item.sellingPrice ? Number(item.sellingPrice) : null,
+            }
+          }).catch(() => {});
+
+          const batchNoVal = item.batchNo || `BAT-${updatedNote.invoiceDate ? updatedNote.invoiceDate.slice(0, 4) : new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+          const sellingPriceVal = item.sellingPrice != null && Number(item.sellingPrice) > 0 ? Number(item.sellingPrice) : (Number(item.unitCost) * 1.5);
+          await prisma.inventoryBatch.create({
+            data: {
+              id: `bat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+              sku: item.sku,
+              batchNo: batchNoVal,
+              receivedDate: updatedNote.invoiceDate || new Date().toISOString().slice(0, 10),
+              costPrice: Number(item.unitCost) || 0,
+              sellingPrice: sellingPriceVal,
+              totalQuantity: Number(item.quantity || 0),
+              remainingQuantity: Number(item.quantity || 0),
+              status: 'in_stock',
+              grnNumber: updatedNote.grnNumber,
+              branchId: updatedNote.branchId,
+              branchName: updatedNote.branchName,
             }
           }).catch(() => {});
         } catch (e) {}

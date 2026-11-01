@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useERP } from '../../context/ERPContext';
 import { POSOrder, SalesTag, Product } from '../../types';
+import { getEffectiveProductPrice, getEffectiveBatchNo } from '../../lib/warehouseUtils';
 import { BarcodeView } from '../barcode/BarcodeView';
 import { motion, AnimatePresence } from 'motion/react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -196,7 +197,7 @@ export const POSTerminal: React.FC = () => {
     return 'Standard Edition';
   };
 
-  const cartRawSubtotal = cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0);
+  const cartRawSubtotal = cart.reduce((acc, item) => acc + ((item.sellingPrice ?? item.product.price) * item.quantity), 0);
   const cartTotalItems = cart.length;
   const cartTotalUnits = cart.reduce((acc, item) => acc + item.quantity, 0);
 
@@ -210,7 +211,7 @@ export const POSTerminal: React.FC = () => {
 
   // Dynamic, item-specific GST calculation with proportional discount allocation
   const cartTax = cart.reduce((acc, item) => {
-    const itemTotal = item.product.price * item.quantity;
+    const itemTotal = (item.sellingPrice ?? item.product.price) * item.quantity;
     const itemRatio = cartRawSubtotal > 0 ? itemTotal / cartRawSubtotal : 0;
     const itemDiscount = discountAmount * itemRatio;
     const effectiveItemTotal = Math.max(0, itemTotal - itemDiscount);
@@ -1147,62 +1148,70 @@ export const POSTerminal: React.FC = () => {
           {viewMode === 'grid' ? (
             /* Product Cards Grid with Thumbnails */
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 max-h-[620px] overflow-y-auto pr-1">
-              {filteredProducts.map(product => (
-                <div
-                  key={product.id}
-                  onClick={() => addToCart(product, 1)}
-                  className="p-3 rounded-[18px] bg-[#FFFFFF] dark:bg-slate-900 border border-[#E8E2D9] dark:border-slate-800 hover:border-[#D97706] hover:shadow-md transition-all text-left flex flex-col justify-between group cursor-pointer relative overflow-hidden"
-                >
-                  <div className="space-y-2">
-                    <div className="relative w-full h-28 rounded-xl overflow-hidden bg-amber-50/50 dark:bg-slate-800 border border-[#E8E2D9] dark:border-slate-700">
-                      <img
-                        src={product.imageUrl}
-                        alt={product.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                      <span className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded font-mono text-[10px] font-bold backdrop-blur-xs ${
-                        product.stock <= 5 ? 'bg-rose-600/80 text-white' : 'bg-black/60 text-white'
-                      }`}>
-                        {product.stock} left
-                      </span>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between text-[10px] font-mono text-[#786C65] mt-0.5">
-                        <span className="truncate">{product.sku}</span>
-                        <span className="text-amber-800 bg-amber-50 dark:bg-amber-950/30 px-1 rounded truncate max-w-[80px] font-bold">
-                          {product.batchNo}
+              {filteredProducts.map((product, pIdx) => {
+                const effectivePrice = getEffectiveProductPrice(product, batches);
+                const effectiveBatchNo = getEffectiveBatchNo(product, batches);
+                const discountedPrice = activeTag && activeTag.discount > 0
+                  ? effectivePrice * (1 - activeTag.discount / 100)
+                  : effectivePrice;
+
+                return (
+                  <div
+                    key={`${product.id}-${pIdx}`}
+                    onClick={() => addToCart(product, 1)}
+                    className="p-3 rounded-[18px] bg-[#FFFFFF] dark:bg-slate-900 border border-[#E8E2D9] dark:border-slate-800 hover:border-[#D97706] hover:shadow-md transition-all text-left flex flex-col justify-between group cursor-pointer relative overflow-hidden"
+                  >
+                    <div className="space-y-2">
+                      <div className="relative w-full h-28 rounded-xl overflow-hidden bg-amber-50/50 dark:bg-slate-800 border border-[#E8E2D9] dark:border-slate-700">
+                        <img
+                          src={product.imageUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=150&auto=format&fit=crop&q=80'}
+                          alt={product.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                        <span className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded font-mono text-[10px] font-bold backdrop-blur-xs ${
+                          product.stock <= 5 ? 'bg-rose-600/80 text-white' : 'bg-black/60 text-white'
+                        }`}>
+                          {product.stock} left
                         </span>
                       </div>
-                      <h3 className="font-semibold text-xs text-[#1F1916] dark:text-white line-clamp-2 leading-snug group-hover:text-[#D97706] transition-colors mt-0.5">
-                        {product.name}
-                      </h3>
-                      <div className="flex items-center gap-1 mt-1 text-[10px] font-mono text-slate-500">
-                        <Barcode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span className="truncate font-semibold">{product.barcode}</span>
-                      </div>
-                    </div>
-                    <div className="pt-2.5 mt-2 border-t border-[#E8E2D9] dark:border-slate-800 flex items-center justify-between">
                       <div>
-                        {activeTag && activeTag.discount > 0 ? (
-                          <div className="flex flex-col">
-                            <span className="text-[10px] text-[#786C65] line-through font-mono">{settings.currencySymbol}{product.price.toFixed(2)}</span>
-                            <span className="font-bold font-mono text-xs text-[#15803D]">
-                              {settings.currencySymbol}{(product.price * (1 - activeTag.discount / 100)).toFixed(2)}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="font-bold font-mono text-xs text-[#1F1916] dark:text-white">
-                            {settings.currencySymbol}{product.price.toFixed(2)}
+                        <div className="flex items-center justify-between text-[10px] font-mono text-[#786C65] mt-0.5">
+                          <span className="truncate">{product.sku}</span>
+                          <span className="text-amber-800 bg-amber-50 dark:bg-amber-950/30 px-1 rounded truncate max-w-[80px] font-bold">
+                            {effectiveBatchNo}
                           </span>
-                        )}
+                        </div>
+                        <h3 className="font-semibold text-xs text-[#1F1916] dark:text-white line-clamp-2 leading-snug group-hover:text-[#D97706] transition-colors mt-0.5">
+                          {product.name}
+                        </h3>
+                        <div className="flex items-center gap-1 mt-1 text-[10px] font-mono text-slate-500">
+                          <Barcode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span className="truncate font-semibold">{product.barcode}</span>
+                        </div>
                       </div>
-                      <button className="w-7 h-7 rounded-lg bg-[#FEF3C7] text-[#B45309] flex items-center justify-center group-hover:bg-[#D97706] group-hover:text-white transition-colors">
-                        <Plus className="w-4 h-4" />
-                      </button>
+                      <div className="pt-2.5 mt-2 border-t border-[#E8E2D9] dark:border-slate-800 flex items-center justify-between">
+                        <div>
+                          {activeTag && activeTag.discount > 0 ? (
+                            <div className="flex flex-col">
+                              <span className="text-[10px] text-[#786C65] line-through font-mono">{settings.currencySymbol}{effectivePrice.toFixed(2)}</span>
+                              <span className="font-bold font-mono text-xs text-[#15803D]">
+                                {settings.currencySymbol}{discountedPrice.toFixed(2)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="font-bold font-mono text-xs text-[#1F1916] dark:text-white">
+                              {settings.currencySymbol}{effectivePrice.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                        <button className="w-7 h-7 rounded-lg bg-[#FEF3C7] text-[#B45309] flex items-center justify-center group-hover:bg-[#D97706] group-hover:text-white transition-colors">
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {filteredProducts.length === 0 && (
                 <div className="col-span-full py-16 text-center text-[#6B7280] text-sm">
                   No items found matching criteria. Scan barcode or adjust filters.
@@ -1212,15 +1221,17 @@ export const POSTerminal: React.FC = () => {
           ) : (
             /* Product List View */
             <div className="space-y-2 max-h-[620px] overflow-y-auto pr-1">
-              {filteredProducts.map(product => {
+              {filteredProducts.map((product, pIdx) => {
+                const effectivePrice = getEffectiveProductPrice(product, batches);
+                const effectiveBatchNo = getEffectiveBatchNo(product, batches);
                 const discountedPrice = activeTag && activeTag.discount > 0
-                  ? product.price * (1 - activeTag.discount / 100)
-                  : product.price;
+                  ? effectivePrice * (1 - activeTag.discount / 100)
+                  : effectivePrice;
                 const inCart = cart.find(item => item.product.id === product.id);
 
                 return (
                   <div
-                    key={product.id}
+                    key={`${product.id}-${pIdx}`}
                     className="p-3 rounded-2xl bg-[#FFFFFF] dark:bg-slate-900 border border-[#E8E2D9] dark:border-slate-800 hover:border-[#D97706] hover:shadow-xs transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 group"
                   >
                     {/* Left: Thumbnail & Meta */}
@@ -1230,7 +1241,7 @@ export const POSTerminal: React.FC = () => {
                     >
                       <div className="relative w-14 h-14 rounded-xl overflow-hidden bg-amber-50/50 dark:bg-slate-800 border border-[#E8E2D9] dark:border-slate-700 shrink-0">
                         <img
-                          src={product.imageUrl}
+                          src={product.imageUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=150&auto=format&fit=crop&q=80'}
                           alt={product.name}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
@@ -1258,7 +1269,7 @@ export const POSTerminal: React.FC = () => {
                             {product.barcode}
                           </span>
                           <span className="text-amber-800 bg-amber-50 dark:bg-amber-950/30 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                            Batch: {product.batchNo}
+                            Batch: {effectiveBatchNo}
                           </span>
                           <span className={`font-semibold ${product.stock <= 5 ? 'text-rose-600' : 'text-emerald-600'}`}>
                             {product.stock} in stock
@@ -1273,7 +1284,7 @@ export const POSTerminal: React.FC = () => {
                         {activeTag && activeTag.discount > 0 ? (
                           <div className="flex flex-col sm:items-end">
                             <span className="text-[10px] text-[#786C65] line-through font-mono">
-                              {settings.currencySymbol}{product.price.toFixed(2)}
+                              {settings.currencySymbol}{effectivePrice.toFixed(2)}
                             </span>
                             <span className="font-bold font-mono text-sm text-[#15803D]">
                               {settings.currencySymbol}{discountedPrice.toFixed(2)}
@@ -1281,7 +1292,7 @@ export const POSTerminal: React.FC = () => {
                           </div>
                         ) : (
                           <span className="font-bold font-mono text-sm text-[#1F1916] dark:text-white">
-                            {settings.currencySymbol}{product.price.toFixed(2)}
+                            {settings.currencySymbol}{effectivePrice.toFixed(2)}
                           </span>
                         )}
                       </div>
@@ -1436,16 +1447,23 @@ export const POSTerminal: React.FC = () => {
 
             {/* Active Cart Items List */}
             <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
-              {cart.map(item => {
-                const effectivePrice = item.product.price * (1 - (activeTag?.discount || 0) / 100);
+              {cart.map((item, cIdx) => {
+                const itemPrice = item.sellingPrice ?? item.product.price;
+                const effectivePrice = itemPrice * (1 - (activeTag?.discount || 0) / 100);
                 const itemTaxRate = getProductTaxRate(item.product);
+                const currentTotalForProduct = cart
+                  .filter(c => c.product.id === item.product.id)
+                  .reduce((s, c) => s + c.quantity, 0);
+                const productObj = products.find(p => p.id === item.product.id) || item.product;
+                const maxStock = productObj.stock ?? item.product.stock ?? 999;
+
                 return (
                   <div
-                    key={item.product.id}
+                    key={item.batchId ? `${item.product.id}-${item.batchId}-${cIdx}` : `${item.product.id}-${cIdx}`}
                     className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-slate-800/60 border border-[#E5E7EB] dark:border-slate-700/80 flex items-center justify-between gap-3"
                   >
                     <img
-                      src={item.product.imageUrl}
+                      src={item.product.imageUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=150&auto=format&fit=crop&q=80'}
                       alt={item.product.name}
                       className="w-10 h-10 rounded-lg object-cover border border-[#E5E7EB] dark:border-slate-700 shrink-0"
                     />
@@ -1454,10 +1472,10 @@ export const POSTerminal: React.FC = () => {
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1">
                         <span className="text-xs font-mono font-bold text-[#10B981]">₹{effectivePrice.toFixed(2)}</span>
                         {activeTag && activeTag.discount > 0 && (
-                          <span className="text-[10px] text-[#6B7280] line-through font-mono">₹{item.product.price.toFixed(2)}</span>
+                          <span className="text-[10px] text-[#6B7280] line-through font-mono">₹{itemPrice.toFixed(2)}</span>
                         )}
                         <span className="text-[9px] bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400 px-1.5 py-0.5 rounded-sm font-mono whitespace-nowrap">
-                          {item.product.batchNo}
+                          {item.product.batchNo || item.batchNumber || 'STANDARD'}
                         </span>
                         <span className="text-[9px] bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400 px-1.5 py-0.5 rounded-sm font-mono whitespace-nowrap">
                           GST: {itemTaxRate}%
@@ -1466,21 +1484,28 @@ export const POSTerminal: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => updateCartQuantity(item.product.id, Math.max(0, item.quantity - 1))}
-                        className="w-7 h-7 rounded-lg bg-[#FFFFFF] dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 text-[#111827] dark:text-white flex items-center justify-center font-bold text-xs hover:bg-slate-100"
+                        onClick={() => updateCartQuantity(item.product.id, Math.max(0, currentTotalForProduct - 1))}
+                        className="w-7 h-7 rounded-lg bg-[#FFFFFF] dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 text-[#111827] dark:text-white flex items-center justify-center font-bold text-xs hover:bg-slate-100 cursor-pointer"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <span className="w-6 text-center font-mono font-semibold text-xs">{item.quantity}</span>
                       <button
-                        onClick={() => updateCartQuantity(item.product.id, item.quantity + 1)}
-                        className="w-7 h-7 rounded-lg bg-[#FFFFFF] dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 text-[#111827] dark:text-white flex items-center justify-center font-bold text-xs hover:bg-slate-100"
+                        onClick={() => {
+                          if (currentTotalForProduct + 1 > maxStock) {
+                            quickNotification('Stock Limit Reached', `Cannot exceed available stock of ${maxStock}`, 'warning');
+                            return;
+                          }
+                          updateCartQuantity(item.product.id, currentTotalForProduct + 1);
+                        }}
+                        disabled={currentTotalForProduct >= maxStock}
+                        className="w-7 h-7 rounded-lg bg-[#FFFFFF] dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 text-[#111827] dark:text-white flex items-center justify-center font-bold text-xs hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={() => removeFromCart(item.product.id)}
-                        className="w-7 h-7 rounded-lg text-[#EF4444] hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center justify-center ml-0.5"
+                        onClick={() => removeFromCart(item.product.id, item.batchId)}
+                        className="w-7 h-7 rounded-lg text-[#EF4444] hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center justify-center ml-0.5 cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

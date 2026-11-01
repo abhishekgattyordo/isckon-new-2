@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Product } from '../../types';
 import { BarcodeView } from '../barcode/BarcodeView';
 import { useERP } from '../../context/ERPContext';
+import { getEffectiveProductPrice } from '../../lib/warehouseUtils';
 import {
   X,
   Edit3,
@@ -42,8 +43,9 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const { deleteProduct, batches, movements } = useERP();
   const [activeTab, setActiveTab] = useState<'overview' | 'inventory' | 'pricing' | 'history' | 'audit'>('overview');
 
-  const margin = Math.round(((product.price - product.cost) / product.price) * 100);
-  const profitPerUnit = product.price - product.cost;
+  const effectivePrice = getEffectiveProductPrice(product, batches);
+  const margin = Math.round(((effectivePrice - product.cost) / effectivePrice) * 100);
+  const profitPerUnit = effectivePrice - product.cost;
 
   // Find associated batches and stock movements for this SKU
   const productBatches = batches.filter(b => b.sku.toLowerCase() === product.sku.toLowerCase());
@@ -148,7 +150,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               <div className="space-y-4">
                 <div className="rounded-2xl bg-slate-100 dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-800 overflow-hidden shadow-inner aspect-square relative flex items-center justify-center">
                   <img
-                    src={product.imageUrl}
+                    src={product.imageUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=400&auto=format&fit=crop&q=80'}
                     alt={product.name}
                     className="w-full h-full object-cover"
                   />
@@ -305,14 +307,14 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <div className="space-y-6">
               {(() => {
                 const taxRate = product.taxRate !== undefined ? product.taxRate : 5;
-                const basePrice = product.price / (1 + taxRate / 100);
-                const taxAmount = product.price - basePrice;
+                const basePrice = effectivePrice / (1 + taxRate / 100);
+                const taxAmount = effectivePrice - basePrice;
                 return (
                   <>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-[#E5E7EB] dark:border-slate-800">
                         <div className="text-xs font-mono font-bold text-slate-400 uppercase">Selling Price (MRP)</div>
-                        <div className="text-3xl font-black text-slate-900 dark:text-white mt-2">₹{product.price.toFixed(2)}</div>
+                        <div className="text-3xl font-black text-slate-900 dark:text-white mt-2">₹{effectivePrice.toFixed(2)}</div>
                         <div className="text-[11px] text-emerald-600 font-semibold mt-1">
                           Inclusive of all taxes (GST {taxRate}%)
                         </div>

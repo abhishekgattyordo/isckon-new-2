@@ -448,7 +448,7 @@ export const DynamicShipmentItemsTable: React.FC<DynamicShipmentItemsTableProps>
       const desc = matchedProd?.description || matchedProd?.name || '';
       const cost = matchedProd?.unitCost ?? matchedProd?.cost ?? '';
       const price = matchedProd?.sellingPrice ?? matchedProd?.price ?? '';
-      const batch = matchedProd?.batchNo || `BAT-2026-${Math.floor(10 + Math.random() * 89)}`;
+      const batch = `BAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
       const tax = matchedProd?.taxRate ?? 0;
       const validTax = [0, 5, 12, 18].includes(tax) ? tax : 0;
 

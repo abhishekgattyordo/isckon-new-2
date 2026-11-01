@@ -99,6 +99,9 @@ export interface InventoryBatch {
   remainingQuantity: number;
   status: 'in_stock' | 'low_stock' | 'out_of_stock';
   grnNumber?: string;
+  branchId?: string;
+  branchName?: string;
+  createdAt?: string;
 }
 
 export interface InwardItem {

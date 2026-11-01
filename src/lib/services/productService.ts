@@ -84,6 +84,20 @@ export async function getProducts(
         take: isPaginatedRequest ? limit : undefined,
       });
 
+      let fifoPriceMap = new Map<string, { price: number; batchNo: string }>();
+      try {
+        const activeBatches = await prisma.inventoryBatch.findMany({
+          where: { remainingQuantity: { gt: 0 } },
+          orderBy: [{ receivedDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
+        });
+        for (const b of activeBatches) {
+          const normSku = (b.sku || '').trim().toUpperCase();
+          if (!fifoPriceMap.has(normSku)) {
+            fifoPriceMap.set(normSku, { price: Number(b.sellingPrice), batchNo: b.batchNo });
+          }
+        }
+      } catch (e) {}
+
       if (dbProducts) {
         const mapped = dbProducts.map(p => {
           const bId = (p as any).branchId || (
@@ -103,17 +117,22 @@ export async function getProducts(
             'Mayapur HQ Central'
           );
 
+          const normSku = (p.sku || '').trim().toUpperCase();
+          const batchInfo = fifoPriceMap.get(normSku);
+          const resolvedPrice = batchInfo ? batchInfo.price : Number(p.price);
+          const resolvedBatchNo = batchInfo ? batchInfo.batchNo : (p.batchNo || '');
+
           return {
             id: p.id,
             sku: p.sku,
             name: p.name,
             category: p.category,
-            price: Number(p.price),
+            price: resolvedPrice,
             cost: Number(p.cost),
             stock: p.stock,
             minStock: p.minStock,
             warehouseZone: p.warehouseZone,
-            batchNo: p.batchNo || '',
+            batchNo: resolvedBatchNo,
             barcode: p.barcode || '',
             imageUrl: p.imageUrl || '',
             status: p.status as any,
@@ -159,7 +178,30 @@ export async function getProducts(
     console.warn('Prisma getProducts failed, falling back to MemoryDb:', error);
   }
 
-  let list = MemoryDb.products || [];
+  const memBatches = (MemoryDb.batches || [])
+    .filter(b => b.remainingQuantity > 0)
+    .sort((a, b) => {
+      const dComp = (a.receivedDate || '').localeCompare(b.receivedDate || '');
+      if (dComp !== 0) return dComp;
+      return (a.id || a.batchNo || '').localeCompare(b.id || b.batchNo || '');
+    });
+  const memFifoMap = new Map<string, { price: number; batchNo: string }>();
+  for (const b of memBatches) {
+    const normSku = (b.sku || '').trim().toUpperCase();
+    if (!memFifoMap.has(normSku)) {
+      memFifoMap.set(normSku, { price: Number(b.sellingPrice), batchNo: b.batchNo });
+    }
+  }
+
+  let list = (MemoryDb.products || []).map(p => {
+    const normSku = (p.sku || '').trim().toUpperCase();
+    const batchInfo = memFifoMap.get(normSku);
+    return {
+      ...p,
+      price: batchInfo ? batchInfo.price : p.price,
+      batchNo: batchInfo ? batchInfo.batchNo : (p.batchNo || '')
+    };
+  });
   let filtered = includeDeleted ? list : list.filter(p => !p.isDeleted && p.status !== 'Pending Stock Receipt');
   if (branchId && branchId !== '*') {
     filtered = filtered.filter(p => {

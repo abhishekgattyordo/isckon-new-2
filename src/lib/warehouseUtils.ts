@@ -127,3 +127,142 @@ export function calculateZoneStats(
     capacityPercent,
   };
 }
+
+/**
+ * Returns the oldest active inventory batch with remainingQuantity > 0 for a given SKU (FIFO principle).
+ * Uses receivedDate ascending with stable secondary sort on id/batchNo.
+ */
+export function getActiveBatch(sku: string, batches: InventoryBatch[]): InventoryBatch | undefined {
+  if (!sku || !batches || !Array.isArray(batches)) return undefined;
+  const normSku = sku.trim().toUpperCase();
+  const activeBatches = batches
+    .filter(b => b.sku && b.sku.trim().toUpperCase() === normSku && Number(b.remainingQuantity) > 0)
+    .sort((a, b) => {
+      const dateA = a.receivedDate || '';
+      const dateB = b.receivedDate || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      const cA = a.createdAt || '';
+      const cB = b.createdAt || '';
+      if (cA && cB && cA !== cB) return cA.localeCompare(cB);
+      return (a.id || a.batchNo || '').localeCompare(b.id || b.batchNo || '');
+    });
+  return activeBatches[0];
+}
+
+/**
+ * Centralized FIFO Price Resolver helper for components:
+ * Returns the selling price of the oldest available inventory batch with remainingQuantity > 0.
+ * Automatically shifts to the next batch when the older batch reaches 0.
+ */
+export function getActiveBatchPrice(sku: string, batches: InventoryBatch[], fallbackPrice = 0): number {
+  const activeBatch = getActiveBatch(sku, batches);
+  return activeBatch ? activeBatch.sellingPrice : fallbackPrice;
+}
+
+/**
+ * Returns the effective selling price of a product based on FIFO oldest active batch pricing.
+ */
+export function getEffectiveProductPrice(product: { sku: string; price: number }, batches: InventoryBatch[]): number {
+  return getActiveBatchPrice(product.sku, batches, product.price);
+}
+
+/**
+ * Returns the effective batch number of a product based on FIFO oldest active batch.
+ */
+export function getEffectiveBatchNo(product: { sku: string; batchNo?: string | null }, batches: InventoryBatch[]): string {
+  const activeBatch = getActiveBatch(product.sku, batches);
+  return activeBatch ? activeBatch.batchNo : (product.batchNo || '');
+}
+
+/**
+ * Allocates a requested quantity across available FIFO batches (oldest first).
+ * If quantity spans across batches (e.g. 7 units when Batch A has 5 units @ ₹500 and Batch B has 10 units @ ₹799),
+ * splits the allocations cleanly across the batches.
+ */
+export function allocateFifoCartItems(
+  product: Product,
+  totalQuantity: number,
+  batches: InventoryBatch[]
+): {
+  batchId?: string;
+  batchNumber?: string;
+  quantity: number;
+  costPrice?: number;
+  sellingPrice: number;
+  batchProduct: Product;
+}[] {
+  if (!product || totalQuantity <= 0) return [];
+  const normSku = (product.sku || '').trim().toUpperCase();
+  const activeBatches = batches
+    .filter(b => b.sku && b.sku.trim().toUpperCase() === normSku && Number(b.remainingQuantity) > 0)
+    .sort((a, b) => {
+      const dateA = a.receivedDate || '';
+      const dateB = b.receivedDate || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      const cA = a.createdAt || '';
+      const cB = b.createdAt || '';
+      if (cA && cB && cA !== cB) return cA.localeCompare(cB);
+      return (a.id || a.batchNo || '').localeCompare(b.id || b.batchNo || '');
+    });
+
+  if (activeBatches.length === 0) {
+    return [{
+      batchNumber: product.batchNo || undefined,
+      quantity: totalQuantity,
+      costPrice: product.cost,
+      sellingPrice: product.price,
+      batchProduct: { ...product }
+    }];
+  }
+
+  const result: {
+    batchId?: string;
+    batchNumber?: string;
+    quantity: number;
+    costPrice?: number;
+    sellingPrice: number;
+    batchProduct: Product;
+  }[] = [];
+
+  let remaining = totalQuantity;
+  for (const b of activeBatches) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, b.remainingQuantity);
+    if (take > 0) {
+      result.push({
+        batchId: b.id,
+        batchNumber: b.batchNo,
+        quantity: take,
+        costPrice: b.costPrice,
+        sellingPrice: b.sellingPrice,
+        batchProduct: {
+          ...product,
+          price: b.sellingPrice,
+          cost: b.costPrice,
+          batchNo: b.batchNo
+        }
+      });
+      remaining -= take;
+    }
+  }
+
+  if (remaining > 0) {
+    const lastBatch = activeBatches[activeBatches.length - 1];
+    result.push({
+      batchId: lastBatch ? lastBatch.id : undefined,
+      batchNumber: lastBatch ? lastBatch.batchNo : product.batchNo || undefined,
+      quantity: remaining,
+      costPrice: lastBatch ? lastBatch.costPrice : product.cost,
+      sellingPrice: lastBatch ? lastBatch.sellingPrice : product.price,
+      batchProduct: {
+        ...product,
+        price: lastBatch ? lastBatch.sellingPrice : product.price,
+        cost: lastBatch ? lastBatch.costPrice : product.cost,
+        batchNo: lastBatch ? lastBatch.batchNo : product.batchNo
+      }
+    });
+  }
+
+  return result;
+}
+
