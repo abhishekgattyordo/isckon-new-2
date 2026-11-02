@@ -18,12 +18,6 @@ export async function GET(req: NextRequest) {
     if (process.env.DATABASE_URL) {
       try {
         const whereClause: any = {};
-        if (branchId && branchId !== '*') {
-          whereClause.OR = [
-            { branchId: branchId },
-            { branchId: null }
-          ];
-        }
         if (sku) {
           whereClause.sku = sku;
         }

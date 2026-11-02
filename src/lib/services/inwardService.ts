@@ -173,7 +173,6 @@ export async function createInwardNote(noteData: Omit<MaterialInwardNote, 'id'>)
               const productUpdates: any = {
                 stock: newStock,
                 cost: item.unitCost != null ? Number(item.unitCost) : prod.cost,
-                price: prod.price,
                 batchNo: prod.batchNo || item.batchNo,
                 status: newStock > (prod.minStock || 5) ? 'in_stock' : 'low_stock',
                 lastUpdated: new Date(),
@@ -378,7 +377,6 @@ export async function updateInwardNoteService(id: string, updates: Partial<Mater
             const productUpdates: any = {
               stock: newStock,
               cost: item.unitCost ? Number(item.unitCost) : dbProd.cost,
-              price: dbProd.price,
               batchNo: dbProd.batchNo || item.batchNo,
               status: newStock > (dbProd.minStock || 5) ? 'in_stock' : 'low_stock',
               lastUpdated: new Date(),

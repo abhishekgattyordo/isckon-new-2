@@ -1368,7 +1368,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 : p.barcode;
 
               const newCost = item.unitCost > 0 ? item.unitCost : p.cost;
-              const newPrice = p.price;
 
               fetch('/api/products', {
                 method: 'PUT',
@@ -1379,7 +1378,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                     barcode: finalBarcode,
                     stock: newStock,
                     cost: newCost,
-                    price: newPrice,
                     batchNo: item.batchNo || p.batchNo
                   }
                 })
@@ -1389,7 +1387,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 ...p,
                 stock: newStock,
                 cost: item.unitCost > 0 ? item.unitCost : p.cost,
-                price: newPrice,
                 batchNo: p.batchNo || item.batchNo,
                 barcode: finalBarcode,
                 status: newStock <= p.minStock ? 'low_stock' : 'in_stock',
@@ -1554,7 +1551,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if ((p.sku || '').trim().toUpperCase() === item.sku.trim().toUpperCase()) {
                 const newStock = p.stock + item.quantity;
                 const newCost = item.unitCost > 0 ? item.unitCost : p.cost;
-                const newPrice = p.price;
 
                 fetch('/api/products', {
                   method: 'PUT',
@@ -1564,7 +1560,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                     updates: {
                       stock: newStock,
                       cost: newCost,
-                      price: newPrice,
                       batchNo: item.batchNo || p.batchNo
                     }
                   })
@@ -1574,7 +1569,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   ...p,
                   stock: newStock,
                   cost: newCost,
-                  price: newPrice,
                   batchNo: item.batchNo || p.batchNo,
                   status: newStock <= p.minStock ? 'low_stock' : 'in_stock',
                   lastUpdated: new Date().toISOString()
