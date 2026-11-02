@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { useERP } from '../../context/ERPContext';
-import { POSOrder, SalesTag, Product } from '../../types';
+import { POSOrder, SalesTag, Product, EventStall } from '../../types';
 import { getEffectiveProductPrice, getEffectiveBatchNo } from '../../lib/warehouseUtils';
+import { isSuperAdmin } from '../../lib/authUtils';
 import { BarcodeView } from '../barcode/BarcodeView';
 import { motion, AnimatePresence } from 'motion/react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -41,7 +42,12 @@ import {
   LayoutGrid,
   List,
   Package,
-  ChevronDown
+  ChevronDown,
+  Store,
+  Lock,
+  Unlock,
+  ShieldAlert,
+  RefreshCw
 } from 'lucide-react';
 
 // Dynamic sales tags are loaded from ERPContext
@@ -93,7 +99,32 @@ const isValidBarcodeValue = (text: string): boolean => {
 };
 
 export const POSTerminal: React.FC = () => {
-  const { products, orders, cart, addToCart, removeFromCart, updateCartQuantity, clearCart, addOrder, user, quickNotification, salesTags, addSalesTag, updateSalesTag, deleteSalesTag, settings, currentBranch, barcodes, batches } = useERP();
+  const {
+    products,
+    orders,
+    cart,
+    addToCart,
+    removeFromCart,
+    updateCartQuantity,
+    clearCart,
+    addOrder,
+    user,
+    quickNotification,
+    salesTags,
+    addSalesTag,
+    updateSalesTag,
+    deleteSalesTag,
+    settings,
+    currentBranch,
+    barcodes,
+    batches,
+    allocations,
+    activeStall,
+    setActiveStall,
+    isStallRestricted,
+    events
+  } = useERP();
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
@@ -155,9 +186,86 @@ export const POSTerminal: React.FC = () => {
   const [scannedQuantity, setScannedQuantity] = useState<number>(1);
   const [productNotFoundBarcode, setProductNotFoundBarcode] = useState<string | null>(null);
 
-  const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
+  // 1. Session-Based Stall Mapping: Build list of all stalls across events for switching/display
+  const availableStalls = React.useMemo(() => {
+    const list: (EventStall & { eventName?: string })[] = [];
+    for (const evt of events) {
+      if (evt.stalls && evt.stalls.length > 0) {
+        for (const s of evt.stalls) {
+          list.push({ ...s, eventId: evt.id, eventName: evt.name });
+        }
+      }
+    }
+    for (const a of allocations) {
+      if (a.stallId && !list.some(s => s.id === a.stallId)) {
+        const evt = events.find(e => e.id === a.eventId);
+        list.push({
+          id: a.stallId,
+          eventId: a.eventId,
+          stallName: a.stallName || 'Assigned Stall',
+          managerName: a.managerEmail || 'Stall Manager',
+          managerContact: '',
+          managerEmail: a.managerEmail || '',
+          eventName: evt?.name || 'Active Event'
+        });
+      }
+    }
+    return list;
+  }, [events, allocations]);
 
-  const filteredProducts = products.filter(p => {
+  // Target allocations for the current active stall
+  const stallAllocations = React.useMemo(() => {
+    if (!activeStall) return [];
+    const emailNorm = (activeStall.managerEmail || user?.email || '').toLowerCase().trim();
+    return allocations.filter(a =>
+      a.stallId === activeStall.id ||
+      (a.managerEmail && a.managerEmail.toLowerCase().trim() === emailNorm)
+    );
+  }, [activeStall, allocations, user?.email]);
+
+  // 2. Restricted POS Catalog: Filter items present in the stall manifest (allocated_qty > 0)
+  const effectiveCatalog = React.useMemo(() => {
+    if (!activeStall) {
+      return products;
+    }
+
+    const allocSkuMap = new Map<string, typeof stallAllocations[0]>();
+    for (const a of stallAllocations) {
+      const normSku = (a.sku || '').trim().toUpperCase();
+      allocSkuMap.set(normSku, a);
+    }
+
+    return products
+      .filter(p => {
+        const normSku = (p.sku || '').trim().toUpperCase();
+        const alloc = allocSkuMap.get(normSku);
+        if (!alloc) return false;
+        const rem = Math.max(0, Number(alloc.allocatedQty) - Number(alloc.soldQty || 0) - Number(alloc.damagedQty || 0));
+        return rem > 0;
+      })
+      .map(p => {
+        const normSku = (p.sku || '').trim().toUpperCase();
+        const alloc = allocSkuMap.get(normSku)!;
+        const rem = Math.max(0, Number(alloc.allocatedQty) - Number(alloc.soldQty || 0) - Number(alloc.damagedQty || 0));
+        return {
+          ...p,
+          stock: rem,
+          warehouseZone: alloc.stallName ? `Stall: ${alloc.stallName}` : p.warehouseZone,
+          price: alloc.price && Number(alloc.price) > 0 ? Number(alloc.price) : p.price,
+          stallAllocation: {
+            stallId: alloc.stallId,
+            stallName: alloc.stallName,
+            allocatedQty: Number(alloc.allocatedQty),
+            soldQty: Number(alloc.soldQty || 0),
+            remainingQty: rem
+          }
+        };
+      });
+  }, [products, activeStall, stallAllocations]);
+
+  const categories = ['All', ...Array.from(new Set(effectiveCatalog.map(p => p.category)))];
+
+  const filteredProducts = effectiveCatalog.filter(p => {
     if (!p) return false;
     const matchesSearch = (p.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
                           (p.sku || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -262,6 +370,39 @@ export const POSTerminal: React.FC = () => {
     }
 
     if (foundProduct) {
+      if (activeStall) {
+        const normSku = (foundProduct.sku || '').trim().toUpperCase();
+        const alloc = stallAllocations.find(a => (a.sku || '').trim().toUpperCase() === normSku);
+        if (!alloc) {
+          quickNotification(
+            'Item Not In Stall Manifest',
+            `Item "${foundProduct.name}" (${foundProduct.sku}) is NOT allocated to your stall "${activeStall.stallName}". Only manifest-allocated stock can be scanned or sold.`,
+            'warning'
+          );
+          setProductNotFoundBarcode(cleanInput);
+          if (onDone) onDone();
+          return;
+        }
+
+        const remaining = Math.max(0, Number(alloc.allocatedQty) - Number(alloc.soldQty || 0) - Number(alloc.damagedQty || 0));
+        if (remaining <= 0) {
+          quickNotification(
+            'Out of Stall Stock',
+            `Allocated stock for "${foundProduct.name}" is completely depleted at this stall.`,
+            'alert'
+          );
+          if (onDone) onDone();
+          return;
+        }
+
+        foundProduct = {
+          ...foundProduct,
+          stock: remaining,
+          price: alloc.price && Number(alloc.price) > 0 ? Number(alloc.price) : foundProduct.price,
+          warehouseZone: alloc.stallName ? `Stall: ${alloc.stallName}` : foundProduct.warehouseZone
+        };
+      }
+
       console.log(`[FRONTEND SCANNER] Instant local product/batch match found:`, foundProduct.sku, targetBatch ? `Batch: ${targetBatch.batchNo} (₹${targetBatch.sellingPrice})` : '');
       playBeep();
       addToCart(foundProduct, 1, targetBatch?.id);
@@ -893,7 +1034,7 @@ export const POSTerminal: React.FC = () => {
 
   // Simulate barcode scans (e.g. for desktop browser testing)
   const simulateCameraScanProduct = (sku: string) => {
-    const found = products.find(p => p.sku === sku);
+    const found = effectiveCatalog.find(p => p.sku === sku);
     if (found) {
       playBeep();
       addToCart(found, 1);
@@ -906,12 +1047,16 @@ export const POSTerminal: React.FC = () => {
       );
       closeCameraScanner();
     } else {
-      quickNotification('Scan Error', `Could not match simulated object.`, 'alert');
+      quickNotification('Scan Error', `Could not match item or item not in stall manifest.`, 'alert');
     }
   };
 
   const simulateCameraScan = () => {
-    const randomProd = products[Math.floor(Math.random() * products.length)];
+    if (effectiveCatalog.length === 0) {
+      quickNotification('Manifest Empty', 'No allocated products available in this stall manifest.', 'warning');
+      return;
+    }
+    const randomProd = effectiveCatalog[Math.floor(Math.random() * effectiveCatalog.length)];
     if (randomProd) {
       playBeep();
       addToCart(randomProd, 1);
@@ -942,6 +1087,10 @@ export const POSTerminal: React.FC = () => {
       cashierName: user?.name || 'Radha Govinda Das',
       customerName: customerName || 'Walk-in Devotee',
       salesTag: activeTag?.name || 'Standard Retail',
+      stallId: activeStall?.id,
+      stallName: activeStall?.stallName,
+      eventId: activeStall?.eventId,
+      terminal: activeStall ? `Stall: ${activeStall.stallName}` : 'Counter-1',
       branchId: currentBranch?.id || 'branch-mayapur-hq',
       branchName: currentBranch?.name || 'Mayapur HQ Central'
     };
@@ -950,11 +1099,146 @@ export const POSTerminal: React.FC = () => {
     setCheckoutSuccess(true);
     setShowReceiptPreview(true);
     clearCart();
-    quickNotification('POS Checkout Completed', `Invoice ${orderNo} generated for branch "${currentBranch?.name}" via ${paymentMethod.toUpperCase()}.`, 'success');
+    quickNotification(
+      'POS Checkout Completed',
+      activeStall 
+        ? `Invoice ${orderNo} generated for ${activeStall.stallName}. Allocated quantities deducted.`
+        : `Invoice ${orderNo} generated for branch "${currentBranch?.name}" via ${paymentMethod.toUpperCase()}.`,
+      'success'
+    );
   };
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-sans">
+      {/* Role-Based Stall Manifest Banner & Session Mapping */}
+      {activeStall ? (
+        <div className="p-4 sm:p-5 rounded-2xl bg-linear-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5 dark:from-amber-950/40 dark:via-orange-950/30 dark:to-slate-900 border-2 border-amber-500/40 dark:border-amber-700/60 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-amber-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Store className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-600 text-white font-mono">
+                  📍 Stall Checkout Mode
+                </span>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+                  {activeStall.stallName}
+                </h2>
+                {activeStall.locationSpot && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-semibold border border-amber-300 dark:border-amber-800">
+                    Spot: {activeStall.locationSpot}
+                  </span>
+                )}
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
+                  <Lock className="w-3.5 h-3.5" /> Manifest Locked ({filteredProducts.length} Products Active)
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+                <span>Stall Manager: <strong className="text-slate-900 dark:text-slate-200">{activeStall.managerName}</strong></span>
+                <span>•</span>
+                <span>Email: <strong className="font-mono text-amber-800 dark:text-amber-400 font-semibold">{activeStall.managerEmail}</strong></span>
+                {activeStall.managerContact && (
+                  <>
+                    <span>•</span>
+                    <span>Contact: {activeStall.managerContact}</span>
+                  </>
+                )}
+                <span>•</span>
+                <span className="text-amber-900 dark:text-amber-300 font-medium bg-amber-100/70 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">
+                  POS strictly filtered to assigned stock manifest
+                </span>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {isSuperAdmin(user) ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Admin Switcher:</span>
+                <select
+                  value={activeStall.id}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (!val) {
+                      setActiveStall(null);
+                    } else {
+                      const found = availableStalls.find(s => s.id === val);
+                      if (found) setActiveStall(found);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-white shadow-2xs"
+                >
+                  <option value="">🌐 Switch to Global Store Catalog</option>
+                  {availableStalls.map(s => (
+                    <option key={s.id} value={s.id}>
+                      📍 {s.stallName} ({s.managerEmail})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setActiveStall(null)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors shadow-2xs cursor-pointer"
+                >
+                  Clear Stall Lock
+                </button>
+              </div>
+            ) : availableStalls.filter(s => s.managerEmail?.toLowerCase() === user?.email?.toLowerCase()).length > 1 ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Switch Stall:</span>
+                <select
+                  value={activeStall.id}
+                  onChange={(e) => {
+                    const found = availableStalls.find(s => s.id === e.target.value);
+                    if (found) setActiveStall(found);
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-white"
+                >
+                  {availableStalls.filter(s => s.managerEmail?.toLowerCase() === user?.email?.toLowerCase()).map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.stallName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="px-3 py-1.5 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-mono text-xs font-bold border border-amber-300 dark:border-amber-800 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5" /> Manifest Locked
+              </div>
+            )}
+          </div>
+        </div>
+      ) : isSuperAdmin(user) && availableStalls.length > 0 ? (
+        <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <Unlock className="w-4 h-4 text-slate-500" />
+            <div>
+              <span className="text-xs font-bold text-slate-800 dark:text-white">Admin Global Mode:</span>{' '}
+              <span className="text-xs text-slate-600 dark:text-slate-400">Viewing central store catalog across all warehouse zones.</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Test Stall Manifest:</span>
+            <select
+              value=""
+              onChange={(e) => {
+                const found = availableStalls.find(s => s.id === e.target.value);
+                if (found) setActiveStall(found);
+              }}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-white shadow-2xs"
+            >
+              <option value="">Select an Event Stall to isolate catalog...</option>
+              {availableStalls.map(s => (
+                <option key={s.id} value={s.id}>
+                  📍 {s.stallName} ({s.managerEmail})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      ) : null}
+
       {/* Top Barcode & Terminal Status Header */}
       <div className="p-6 rounded-2xl bg-[#FFFFFF] dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -1169,10 +1453,15 @@ export const POSTerminal: React.FC = () => {
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
                         <span className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded font-mono text-[10px] font-bold backdrop-blur-xs ${
-                          product.stock <= 5 ? 'bg-rose-600/80 text-white' : 'bg-black/60 text-white'
+                          product.stock <= 5 ? 'bg-rose-600/90 text-white' : 'bg-black/70 text-white'
                         }`}>
-                          {product.stock} left
+                          {product.stallAllocation ? `Stall: ${product.stock} left` : `${product.stock} left`}
                         </span>
+                        {product.stallAllocation && (
+                          <span className="absolute bottom-1.5 left-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-600/90 text-white truncate text-center backdrop-blur-xs shadow-2xs">
+                            📍 {product.stallAllocation.stallName || 'Stall'} ({product.stallAllocation.soldQty} sold)
+                          </span>
+                        )}
                       </div>
                       <div>
                         <div className="flex items-center justify-between text-[10px] font-mono text-[#786C65] mt-0.5">
@@ -1272,8 +1561,13 @@ export const POSTerminal: React.FC = () => {
                             Batch: {effectiveBatchNo}
                           </span>
                           <span className={`font-semibold ${product.stock <= 5 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                            {product.stock} in stock
+                            {product.stallAllocation ? `Stall Allocated: ${product.stock} left (of ${product.stallAllocation.allocatedQty})` : `${product.stock} in stock`}
                           </span>
+                          {product.stallAllocation && (
+                            <span className="text-amber-900 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                              📍 {product.stallAllocation.stallName || 'Assigned Stall'}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

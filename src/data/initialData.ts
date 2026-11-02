@@ -11,7 +11,8 @@ import {
   BarcodeRecord,
   InventoryBatch,
   SalesTag,
-  Supplier
+  Supplier,
+  EventAllocation
 } from '../types';
 
 export const GLOBAL_BRANCH: Branch = {
@@ -1019,9 +1020,29 @@ export const INITIAL_EVENTS: SalesEvent[] = [
     description: 'Annual Ratha Yatra book marathon & prasadam counter at Hare Krishna Hill',
     bannerColor: 'bg-emerald-700',
     stallLocation: 'Main Temple Entrance Plaza — Bangalore',
-    managerName: 'Abhishek',
+    managerName: 'Sri Rama Das',
     branchId: 'branch-bangalore',
-    branchName: 'Bangalore ISKCON Sri Radha Krishna Temple'
+    branchName: 'Bangalore ISKCON Sri Radha Krishna Temple',
+    stalls: [
+      {
+        id: 'stall-blr-01',
+        eventId: 'event-blr-01',
+        stallName: 'Pavilion A — Vedic Literature & Epics',
+        managerName: 'Sri Rama Das',
+        managerContact: '+91 94480 12345',
+        managerEmail: 'srirama@aura-retail.org',
+        locationSpot: 'North Temple Gate Pavilion'
+      },
+      {
+        id: 'stall-blr-02',
+        eventId: 'event-blr-01',
+        stallName: 'Pavilion B — Sandalwood & Ayurveda',
+        managerName: 'Radha Govinda Das',
+        managerContact: '+91 98450 67890',
+        managerEmail: 'store.manager@aura-retail.org',
+        locationSpot: 'East Courtyard Counter'
+      }
+    ]
   },
   // MANGALORE EVENT
   {
@@ -1040,7 +1061,96 @@ export const INITIAL_EVENTS: SalesEvent[] = [
     stallLocation: 'Devikatte Mandir Grounds — Mangalore',
     managerName: 'Gaurav Das',
     branchId: 'branch-mangalore',
-    branchName: 'Mangalore ISKCON Jagannath Mandir'
+    branchName: 'Mangalore ISKCON Jagannath Mandir',
+    stalls: [
+      {
+        id: 'stall-mgl-01',
+        eventId: 'event-mgl-01',
+        stallName: 'Coastal Jagannath Mandir Stall #1',
+        managerName: 'Gaurav Das (Mangalore Store Lead)',
+        managerContact: '+91 824 249 5366',
+        managerEmail: 'mangalore.store@aura-retail.org',
+        locationSpot: 'Devikatte Mandir Grounds'
+      }
+    ]
+  }
+];
+
+export const INITIAL_ALLOCATIONS: EventAllocation[] = [
+  {
+    id: 'alloc-blr-01',
+    eventId: 'event-blr-01',
+    sku: 'BLR-BK-BG-KAN-01',
+    productName: 'Bhagavad-gita Yatha Rupa (Kannada Deluxe Edition)',
+    category: 'Books & Scriptures',
+    allocatedQty: 30,
+    soldQty: 4,
+    damagedQty: 0,
+    returnedQty: 0,
+    price: 550,
+    stallId: 'stall-blr-01',
+    stallName: 'Pavilion A — Vedic Literature & Epics',
+    managerEmail: 'srirama@aura-retail.org'
+  },
+  {
+    id: 'alloc-blr-02',
+    eventId: 'event-blr-01',
+    sku: 'BLR-SWEET-LADDU-02',
+    productName: 'Temple Tirupati-Style Besan Laddu Gift Box (500g)',
+    category: 'Food & Prasadam',
+    allocatedQty: 20,
+    soldQty: 2,
+    damagedQty: 0,
+    returnedQty: 0,
+    price: 250,
+    stallId: 'stall-blr-01',
+    stallName: 'Pavilion A — Vedic Literature & Epics',
+    managerEmail: 'srirama@aura-retail.org'
+  },
+  {
+    id: 'alloc-blr-03',
+    eventId: 'event-blr-01',
+    sku: 'MAY-JAPA-NEEM-01',
+    productName: 'Neem Japa Mala (108 Beads)',
+    category: 'Japa & Meditation',
+    allocatedQty: 15,
+    soldQty: 1,
+    damagedQty: 0,
+    returnedQty: 0,
+    price: 180,
+    stallId: 'stall-blr-01',
+    stallName: 'Pavilion A — Vedic Literature & Epics',
+    managerEmail: 'srirama@aura-retail.org'
+  },
+  {
+    id: 'alloc-blr-04',
+    eventId: 'event-blr-01',
+    sku: 'BLR-AYUR-CHANDAN-04',
+    productName: 'Mysore Pure Sandalwood Chandan Paste (100g Jar)',
+    category: 'Organic & Ayurveda',
+    allocatedQty: 25,
+    soldQty: 3,
+    damagedQty: 0,
+    returnedQty: 0,
+    price: 450,
+    stallId: 'stall-blr-02',
+    stallName: 'Pavilion B — Sandalwood & Ayurveda',
+    managerEmail: 'store.manager@aura-retail.org'
+  },
+  {
+    id: 'alloc-mgl-01',
+    eventId: 'event-mgl-01',
+    sku: 'MGL-IDOL-JAG-01',
+    productName: 'Lord Jagannath, Baladeva & Subhadra Wooden Deity Set (6 inch)',
+    category: 'Deity Worship & Paraphernalia',
+    allocatedQty: 20,
+    soldQty: 2,
+    damagedQty: 0,
+    returnedQty: 0,
+    price: 950,
+    stallId: 'stall-mgl-01',
+    stallName: 'Coastal Jagannath Mandir Stall #1',
+    managerEmail: 'mangalore.store@aura-retail.org'
   }
 ];
 

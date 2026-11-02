@@ -85,6 +85,13 @@ export interface Product {
   isDeleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;
+  stallAllocation?: {
+    stallId?: string;
+    stallName?: string;
+    allocatedQty: number;
+    soldQty: number;
+    remainingQty: number;
+  };
 }
 
 export interface InventoryBatch {
@@ -220,6 +227,9 @@ export interface POSOrder {
   terminal?: string;
   branchId?: string;
   branchName?: string;
+  stallId?: string;
+  stallName?: string;
+  eventId?: string;
   isDeleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;

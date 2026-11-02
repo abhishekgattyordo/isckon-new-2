@@ -21,7 +21,9 @@ import {
   RecycleBinItem,
   RecycleItemType,
   Supplier,
-  InwardItem
+  InwardItem,
+  EventAllocation,
+  EventStall
 } from '../types';
 import {
   INITIAL_BRANCHES,
@@ -30,6 +32,7 @@ import {
   INITIAL_ZONES,
   INITIAL_ORDERS,
   INITIAL_EVENTS,
+  INITIAL_ALLOCATIONS,
   INITIAL_MOVEMENTS,
   INITIAL_NOTIFICATIONS,
   INITIAL_USER,
@@ -82,6 +85,13 @@ interface ERPContextType {
   updateEvent: (id: string, updates: Partial<SalesEvent>) => void | Promise<void>;
   deleteEvent: (id: string) => void | Promise<void>;
   setEvents: React.Dispatch<React.SetStateAction<SalesEvent[]>>;
+  allocations: EventAllocation[];
+  setAllocations: React.Dispatch<React.SetStateAction<EventAllocation[]>>;
+  fetchAllocations: (eventId?: string) => Promise<EventAllocation[]>;
+  recordStallSale: (stallId: string, sku: string, quantity: number, orderTotal?: number, isBook?: boolean) => Promise<void>;
+  activeStall: EventStall | null;
+  setActiveStall: (stall: EventStall | null) => void;
+  isStallRestricted: boolean;
   movements: StockMovement[];
   notifications: NotificationItem[];
   markNotificationRead: (id: string) => void;
@@ -358,6 +368,28 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [allEvents, setAllEvents] = useState<SalesEvent[]>([]);
   const [allMovements, setAllMovements] = useState<StockMovement[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+
+  const [allocations, setAllocations] = useState<EventAllocation[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iskcon_erp_allocations');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+    }
+    return INITIAL_ALLOCATIONS;
+  });
+
+  const [activeStall, setActiveStall] = useState<EventStall | null>(null);
+  const [isStallRestricted, setIsStallRestricted] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('iskcon_erp_allocations', JSON.stringify(allocations));
+    }
+  }, [allocations]);
 
   // Strict & Robust Branch Matcher
   const isItemInActiveBranch = React.useCallback((item: any, branch: Branch): boolean => {
@@ -839,7 +871,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const isSuper = isSuperAdmin(user);
         const userFetchUrl = isSuper || !bId || bId === 'all-branches' ? '/api/users' : `/api/users${branchQuery}`;
 
-        const [auditRes, productsRes, inwardRes, ordersRes, eventsRes, usersRes, recycleRes, branchesRes, barcodesRes, batchesRes] = await Promise.all([
+        const [auditRes, productsRes, inwardRes, ordersRes, eventsRes, usersRes, recycleRes, branchesRes, barcodesRes, batchesRes, allocsRes] = await Promise.all([
           fetch(`/api/audit${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
           fetch(`/api/products${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
           fetch(`/api/inward${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
@@ -849,7 +881,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           fetch('/api/recycle-bin').then(r => r.json()).catch(() => ({ success: false })),
           fetch('/api/branches').then(r => r.json()).catch(() => ({ success: false })),
           fetch(`/api/barcodes${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
-          fetch(`/api/batches${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false }))
+          fetch(`/api/batches${branchQuery}`, { headers: branchHeaders }).then(r => r.json()).catch(() => ({ success: false })),
+          fetch('/api/events/allocations').then(r => r.json()).catch(() => ({ success: false }))
         ]);
 
         if (fetchId !== activeFetchIdRef.current) {
@@ -926,6 +959,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
+        if (allocsRes.success && Array.isArray(allocsRes.allocations) && allocsRes.allocations.length > 0) {
+          setAllocations(allocsRes.allocations);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_allocations', JSON.stringify(allocsRes.allocations));
+          }
+        }
+
         if (batchesRes.success && Array.isArray(batchesRes.batches) && batchesRes.batches.length > 0) {
           setBatches(batchesRes.batches);
           if (typeof window !== 'undefined') {
@@ -945,6 +985,76 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     fetchAllData();
   }, [currentBranch?.id]);
+
+
+  const fetchAllocations = async (eventId?: string): Promise<EventAllocation[]> => {
+    try {
+      const q = eventId ? `?eventId=${encodeURIComponent(eventId)}` : '';
+      const res = await fetch(`/api/events/allocations${q}`).then(r => r.json());
+      if (res.success && Array.isArray(res.allocations)) {
+        setAllocations(res.allocations);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('iskcon_erp_allocations', JSON.stringify(res.allocations));
+        }
+        return res.allocations;
+      }
+    } catch (e) {
+      console.warn('Failed to fetch allocations:', e);
+    }
+    return allocations;
+  };
+
+  const recordStallSale = async (
+    stallId: string,
+    sku: string,
+    quantity: number,
+    orderTotal: number = 0,
+    isBook: boolean = false
+  ) => {
+    const normSku = (sku || '').trim().toUpperCase();
+    let updatedAlloc: EventAllocation | null = null;
+
+    setAllocations(prev => {
+      const updated = prev.map(a => {
+        const aSku = (a.sku || '').trim().toUpperCase();
+        if ((a.stallId === stallId || (!a.stallId && stallId)) && aSku === normSku) {
+          const newSold = (a.soldQty || 0) + quantity;
+          updatedAlloc = { ...a, soldQty: newSold };
+          return updatedAlloc;
+        }
+        return a;
+      });
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('iskcon_erp_allocations', JSON.stringify(updated));
+      }
+      return updated;
+    });
+
+    if (updatedAlloc) {
+      fetch('/api/events/allocations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedAlloc)
+      }).catch(e => console.warn('Failed to sync stall allocation sale:', e));
+    }
+
+    if (updatedAlloc && (updatedAlloc as any).eventId) {
+      const eventId = (updatedAlloc as any).eventId;
+      setAllEvents(prev => prev.map(evt => {
+        if (evt.id === eventId) {
+          return {
+            ...evt,
+            currentRevenue: (evt.currentRevenue || 0) + orderTotal,
+            booksSoldQty: isBook ? (evt.booksSoldQty || 0) + quantity : evt.booksSoldQty,
+            booksSoldRevenue: isBook ? (evt.booksSoldRevenue || 0) + orderTotal : evt.booksSoldRevenue,
+            giftsSoldQty: !isBook ? (evt.giftsSoldQty || 0) + quantity : evt.giftsSoldQty,
+            giftsSoldRevenue: !isBook ? (evt.giftsSoldRevenue || 0) + orderTotal : evt.giftsSoldRevenue,
+          };
+        }
+        return evt;
+      }));
+    }
+  };
 
   const logActivity = async (action: string, module: string, referenceNo?: string, details?: string) => {
     const newLog: AuditLog = {
@@ -1103,6 +1213,62 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
   }, [branches]);
+
+  // Requirement 1: Session-Based Stall Mapping
+  // Cross-reference logged-in user's email with active event stall assignments and allocations
+  useEffect(() => {
+    if (!user || !user.email) {
+      setIsStallRestricted(false);
+      setActiveStall(null);
+      return;
+    }
+
+    const emailNorm = user.email.toLowerCase().trim();
+    const isSuper = isSuperAdmin(user);
+
+    // Collect all stalls from active events
+    const allStalls: EventStall[] = [];
+    for (const evt of allEvents) {
+      if (evt.stalls && evt.stalls.length > 0) {
+        for (const s of evt.stalls) {
+          allStalls.push({ ...s, eventId: evt.id });
+        }
+      }
+    }
+
+    // Also collect stall references from allocations if not explicitly listed in event.stalls
+    for (const a of allocations) {
+      if (a.stallId && !allStalls.some(s => s.id === a.stallId)) {
+        allStalls.push({
+          id: a.stallId,
+          eventId: a.eventId,
+          stallName: a.stallName || 'Event Stall',
+          managerName: user.name,
+          managerContact: user.shift || '',
+          managerEmail: a.managerEmail || user.email,
+        });
+      }
+    }
+
+    // Check if user is a designated stall manager
+    const matchingStalls = allStalls.filter(s => (s.managerEmail || '').toLowerCase().trim() === emailNorm);
+
+    if (!isSuper && matchingStalls.length > 0) {
+      // Non-admin stall manager: strictly restrict to their assigned stall
+      setIsStallRestricted(true);
+      setActiveStall(prev => {
+        if (prev && matchingStalls.some(s => s.id === prev.id)) return prev;
+        return matchingStalls[0];
+      });
+    } else if (isSuper) {
+      // Super admin is NOT locked by default, but can pick a stall view
+      setIsStallRestricted(false);
+    } else {
+      setIsStallRestricted(false);
+      setActiveStall(null);
+    }
+  }, [user, allEvents, allocations]);
+
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [theme, setThemeState] = useState<'light' | 'dark' | 'system'>('light');
@@ -1709,10 +1875,17 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addOrder = (orderData: Omit<POSOrder, 'id'>) => {
+    const effectiveStallId = orderData.stallId || activeStall?.id;
+    const effectiveStallName = orderData.stallName || activeStall?.stallName;
+    const effectiveEventId = orderData.eventId || activeStall?.eventId;
+
     const newOrder: POSOrder = {
       ...orderData,
       id: `ord-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-      terminal: 'Counter-1',
+      terminal: effectiveStallName ? `Stall: ${effectiveStallName}` : (orderData.terminal || 'Counter-1'),
+      stallId: effectiveStallId,
+      stallName: effectiveStallName,
+      eventId: effectiveEventId,
       branchId: orderData.branchId || currentBranch?.id || 'branch-mayapur-hq',
       branchName: orderData.branchName || currentBranch?.name || 'Mayapur HQ Central'
     };
@@ -1723,6 +1896,41 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newOrder)
     }).catch(e => console.warn('Could not post POS order:', e));
+
+    // Deduct sold quantities directly from stall's allocation ledger upon bill completion
+    if (effectiveStallId) {
+      for (const cartItem of newOrder.items) {
+        const isBook = cartItem.product.category?.toLowerCase().includes('book') || cartItem.product.category?.toLowerCase().includes('scripture');
+        const itemRev = (cartItem.sellingPrice ?? cartItem.product.price) * cartItem.quantity;
+        recordStallSale(effectiveStallId, cartItem.product.sku, cartItem.quantity, itemRev, isBook);
+      }
+
+      if (effectiveEventId) {
+        fetch('/api/events/transactions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            eventId: effectiveEventId,
+            orderNumber: newOrder.orderNumber,
+            items: newOrder.items.map(it => ({
+              sku: it.product.sku,
+              name: it.product.name,
+              quantity: it.quantity,
+              price: it.sellingPrice ?? it.product.price,
+              discountPercent: it.discountPercent || 0,
+              total: (it.sellingPrice ?? it.product.price) * it.quantity
+            })),
+            subtotal: newOrder.subtotal,
+            taxAmount: newOrder.taxAmount,
+            discountAmount: newOrder.discountAmount,
+            total: newOrder.total,
+            paymentMethod: newOrder.paymentMethod === 'card' ? 'cash' : newOrder.paymentMethod,
+            timestamp: new Date().toISOString(),
+            cashierName: user.name
+          })
+        }).catch(e => console.warn('Could not post event transaction:', e));
+      }
+    }
 
     // Deduct inventory batches in FIFO order
     setBatches(prevBatches => {
@@ -1904,6 +2112,30 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const availableStock = product.stock ?? 999;
     const sku = (product.sku || '').trim().toUpperCase();
 
+    // Check stall allocation limits if activeStall is set
+    if (activeStall) {
+      const emailNorm = (activeStall.managerEmail || user?.email || '').toLowerCase().trim();
+      const stallAlloc = allocations.find(a => 
+        (a.stallId === activeStall.id || (a.managerEmail && a.managerEmail.toLowerCase().trim() === emailNorm)) &&
+        (a.sku || '').trim().toUpperCase() === sku
+      );
+
+      if (!stallAlloc) {
+        quickNotification('Not In Stall Manifest', `"${product.name}" (${product.sku}) is not allocated to your stall "${activeStall.stallName}".`, 'warning');
+        return;
+      }
+
+      const stallRemaining = Math.max(0, Number(stallAlloc.allocatedQty) - Number(stallAlloc.soldQty || 0) - Number(stallAlloc.damagedQty || 0));
+      const existingInCart = cart
+        .filter(item => (item.product.sku || '').trim().toUpperCase() === sku)
+        .reduce((sum, item) => sum + item.quantity, 0);
+
+      if (existingInCart + quantity > stallRemaining) {
+        quickNotification('Stall Allocation Limit', `Cannot exceed stall allocated balance of ${stallRemaining} units for "${product.name}".`, 'warning');
+        return;
+      }
+    }
+
     const existingTotalInCart = cart
       .filter(item => (item.product.sku || '').trim().toUpperCase() === sku)
       .reduce((sum, item) => sum + item.quantity, 0);
@@ -1988,6 +2220,24 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
     const productObj = products.find(p => p.id === productId);
+    const sku = (productObj?.sku || '').trim().toUpperCase();
+
+    if (activeStall) {
+      const emailNorm = (activeStall.managerEmail || user?.email || '').toLowerCase().trim();
+      const stallAlloc = allocations.find(a => 
+        (a.stallId === activeStall.id || (a.managerEmail && a.managerEmail.toLowerCase().trim() === emailNorm)) &&
+        (a.sku || '').trim().toUpperCase() === sku
+      );
+
+      if (stallAlloc) {
+        const stallRemaining = Math.max(0, Number(stallAlloc.allocatedQty) - Number(stallAlloc.soldQty || 0) - Number(stallAlloc.damagedQty || 0));
+        if (quantity > stallRemaining) {
+          quickNotification('Stall Allocation Limit', `Cannot exceed remaining stall balance of ${stallRemaining} units for "${productObj?.name || sku}".`, 'warning');
+          return;
+        }
+      }
+    }
+
     const maxStock = productObj?.stock ?? 999;
     if (quantity > maxStock) {
       quickNotification('Stock Limit Reached', `Cannot exceed available stock of ${maxStock}`, 'warning');
@@ -2714,6 +2964,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateEvent,
         deleteEvent,
         setEvents,
+        allocations,
+        setAllocations,
+        fetchAllocations,
+        recordStallSale,
+        activeStall,
+        setActiveStall,
+        isStallRestricted,
         movements,
         notifications,
         markNotificationRead,

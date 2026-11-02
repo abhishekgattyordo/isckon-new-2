@@ -11,7 +11,18 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const eventId = searchParams.get('eventId') || undefined;
-    const allocations = await getEventAllocations(eventId).catch(() => []);
+    const stallId = searchParams.get('stallId') || undefined;
+    const managerEmail = searchParams.get('managerEmail') || undefined;
+
+    let allocations = await getEventAllocations(eventId).catch(() => []);
+    if (stallId) {
+      allocations = allocations.filter(a => a.stallId === stallId);
+    }
+    if (managerEmail) {
+      const emailLower = managerEmail.toLowerCase();
+      allocations = allocations.filter(a => a.managerEmail && a.managerEmail.toLowerCase() === emailLower);
+    }
+
     return NextResponse.json({ success: true, allocations });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error?.message, allocations: [] }, { status: 500 });

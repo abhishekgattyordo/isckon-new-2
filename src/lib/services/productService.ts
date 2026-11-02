@@ -3,6 +3,7 @@ import { MemoryDb } from '../dbStore';
 import { Product } from '../../types';
 import { INITIAL_PRODUCTS } from '../../data/initialData';
 import { generateEan13Barcode } from '../barcodeUtils';
+import { getEventAllocations } from './eventService';
 
 if (MemoryDb.products.length === 0) {
   MemoryDb.products = [...INITIAL_PRODUCTS];
@@ -14,6 +15,83 @@ export interface ProductQueryOptions {
   search?: string;
   page?: number;
   limit?: number;
+  userEmail?: string;
+  stallId?: string;
+  eventId?: string;
+}
+
+async function filterByStallManifest(
+  prods: Product[],
+  opts: { userEmail?: string; stallId?: string; eventId?: string }
+): Promise<Product[]> {
+  const { userEmail, stallId, eventId } = opts;
+  if (!userEmail && !stallId && !eventId) {
+    return prods;
+  }
+
+  const isSuperAdminEmail = userEmail && (
+    userEmail.toLowerCase().includes('admin') ||
+    userEmail.toLowerCase() === 'abhishekgatty80@gmail.com' ||
+    userEmail.toLowerCase() === 'abhishekgatty1@gmail.com' ||
+    userEmail.toLowerCase() === 'abhishekgatty58@gmail.com'
+  );
+
+  // If superadmin and no stallId was explicitly asked, don't restrict
+  if (isSuperAdminEmail && !stallId) {
+    return prods;
+  }
+
+  const allAllocations = await getEventAllocations(eventId).catch(() => []);
+  let targetAllocations = allAllocations;
+
+  if (stallId) {
+    targetAllocations = targetAllocations.filter(a => a.stallId === stallId);
+  } else if (userEmail) {
+    const emailNorm = userEmail.toLowerCase().trim();
+    targetAllocations = targetAllocations.filter(a => (a.managerEmail || '').toLowerCase().trim() === emailNorm);
+  }
+
+  // Non-admin stall manager or specific stall query
+  if (stallId || (userEmail && !isSuperAdminEmail)) {
+    if (!targetAllocations || targetAllocations.length === 0) {
+      return [];
+    }
+
+    const allocSkuMap = new Map<string, typeof targetAllocations[0]>();
+    for (const a of targetAllocations) {
+      const normSku = (a.sku || '').trim().toUpperCase();
+      allocSkuMap.set(normSku, a);
+    }
+
+    return prods
+      .filter(p => {
+        const normSku = (p.sku || '').trim().toUpperCase();
+        const alloc = allocSkuMap.get(normSku);
+        if (!alloc) return false;
+        const remaining = Math.max(0, Number(alloc.allocatedQty) - Number(alloc.soldQty || 0) - Number(alloc.damagedQty || 0));
+        return remaining > 0;
+      })
+      .map(p => {
+        const normSku = (p.sku || '').trim().toUpperCase();
+        const alloc = allocSkuMap.get(normSku)!;
+        const remaining = Math.max(0, Number(alloc.allocatedQty) - Number(alloc.soldQty || 0) - Number(alloc.damagedQty || 0));
+        return {
+          ...p,
+          stock: remaining,
+          warehouseZone: alloc.stallName ? `Stall: ${alloc.stallName}` : p.warehouseZone,
+          price: alloc.price && Number(alloc.price) > 0 ? Number(alloc.price) : p.price,
+          stallAllocation: {
+            stallId: alloc.stallId,
+            stallName: alloc.stallName,
+            allocatedQty: Number(alloc.allocatedQty),
+            soldQty: Number(alloc.soldQty || 0),
+            remainingQty: remaining
+          }
+        };
+      });
+  }
+
+  return prods;
 }
 
 export async function getProducts(
@@ -26,6 +104,9 @@ export async function getProducts(
   let page = 1;
   let limit = 1000;
   let isPaginatedRequest = false;
+  let userEmail: string | undefined = undefined;
+  let stallId: string | undefined = undefined;
+  let eventId: string | undefined = undefined;
 
   if (typeof includeDeletedOrOpts === 'object' && includeDeletedOrOpts !== null) {
     includeDeleted = includeDeletedOrOpts.includeDeleted ?? false;
@@ -34,6 +115,9 @@ export async function getProducts(
     page = includeDeletedOrOpts.page ?? 1;
     limit = includeDeletedOrOpts.limit ?? 20;
     isPaginatedRequest = true;
+    userEmail = includeDeletedOrOpts.userEmail;
+    stallId = includeDeletedOrOpts.stallId;
+    eventId = includeDeletedOrOpts.eventId;
   } else {
     includeDeleted = Boolean(includeDeletedOrOpts);
     branchId = branchIdArg;
@@ -99,7 +183,7 @@ export async function getProducts(
       } catch (e) {}
 
       if (dbProducts) {
-        const mapped = dbProducts.map(p => {
+        const mapped: Product[] = dbProducts.map(p => {
           const bId = (p as any).branchId || (
             p.sku?.startsWith('MGL-') || p.warehouseZone?.includes('Mangalore') ? 'branch-mangalore' :
             p.sku?.startsWith('BLR-') || p.warehouseZone?.includes('Bangalore') ? 'branch-bangalore' :
@@ -149,7 +233,7 @@ export async function getProducts(
           };
         });
 
-        let filtered = mapped;
+        let filtered: Product[] = mapped;
         if (branchId && branchId !== '*') {
           filtered = filtered.filter(p => {
             if (p.branchId === branchId) return true;
@@ -159,12 +243,15 @@ export async function getProducts(
           });
         }
 
-        const finalTotal = isPaginatedRequest ? totalCount : filtered.length;
+        filtered = await filterByStallManifest(filtered, { userEmail, stallId, eventId });
+
+        const finalTotal = isPaginatedRequest ? (stallId || userEmail ? filtered.length : totalCount) : filtered.length;
         const totalPages = Math.ceil(finalTotal / limit) || 1;
+        const resultProds = isPaginatedRequest && (stallId || userEmail) ? filtered.slice((page - 1) * limit, page * limit) : filtered;
 
         if (isPaginatedRequest) {
           return {
-            products: filtered,
+            products: resultProds,
             totalCount: finalTotal,
             page,
             limit,
@@ -221,6 +308,8 @@ export async function getProducts(
       p.barcode?.toLowerCase().includes(q)
     );
   }
+
+  filtered = await filterByStallManifest(filtered, { userEmail, stallId, eventId });
 
   const totalCount = filtered.length;
   const totalPages = Math.ceil(totalCount / limit) || 1;

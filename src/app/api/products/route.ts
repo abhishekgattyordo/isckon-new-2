@@ -11,8 +11,11 @@ export async function GET(req: NextRequest) {
     const search = url.searchParams.get('search') || undefined;
     const page = parseInt(url.searchParams.get('page') || '1', 10);
     const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : 500;
+    const userEmail = url.searchParams.get('userEmail') || req.headers.get('x-user-email') || undefined;
+    const stallId = url.searchParams.get('stallId') || undefined;
+    const eventId = url.searchParams.get('eventId') || undefined;
 
-    const result = await getProducts({ includeDeleted, branchId, search, page, limit });
+    const result = await getProducts({ includeDeleted, branchId, search, page, limit, userEmail, stallId, eventId });
     return NextResponse.json({
       success: true,
       products: result.products || [],

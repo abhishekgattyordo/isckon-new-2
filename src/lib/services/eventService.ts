@@ -1,10 +1,14 @@
 import { prisma } from '../prisma';
 import { MemoryDb } from '../dbStore';
 import { SalesEvent, EventAllocation, EventTransaction } from '../../types';
-import { INITIAL_EVENTS } from '../../data/initialData';
+import { INITIAL_EVENTS, INITIAL_ALLOCATIONS } from '../../data/initialData';
 
 if (!MemoryDb.events || MemoryDb.events.length === 0) {
   MemoryDb.events = [...INITIAL_EVENTS];
+}
+
+if (!MemoryDb.eventAllocations || MemoryDb.eventAllocations.length === 0) {
+  MemoryDb.eventAllocations = [...INITIAL_ALLOCATIONS];
 }
 
 export async function getEvents(includeDeleted = false, branchId?: string): Promise<SalesEvent[]> {
@@ -311,21 +315,23 @@ export async function getEventAllocations(eventId?: string): Promise<EventAlloca
         where: eventId ? { eventId } : undefined,
         orderBy: { createdAt: 'desc' }
       });
-      return records.map(r => ({
-        id: r.id,
-        eventId: r.eventId,
-        sku: r.sku,
-        productName: r.productName,
-        category: r.category,
-        allocatedQty: Number(r.allocatedQty),
-        soldQty: Number(r.soldQty),
-        damagedQty: Number(r.damagedQty),
-        returnedQty: Number(r.returnedQty),
-        price: Number(r.price),
-        stallId: r.stallId || undefined,
-        stallName: r.stallName || undefined,
-        managerEmail: r.managerEmail || undefined,
-      }));
+      if (records && records.length > 0) {
+        return records.map(r => ({
+          id: r.id,
+          eventId: r.eventId,
+          sku: r.sku,
+          productName: r.productName,
+          category: r.category,
+          allocatedQty: Number(r.allocatedQty),
+          soldQty: Number(r.soldQty),
+          damagedQty: Number(r.damagedQty),
+          returnedQty: Number(r.returnedQty),
+          price: Number(r.price),
+          stallId: r.stallId || undefined,
+          stallName: r.stallName || undefined,
+          managerEmail: r.managerEmail || undefined,
+        }));
+      }
     }
   } catch (error) {
     console.warn('Prisma getEventAllocations failed:', error);
