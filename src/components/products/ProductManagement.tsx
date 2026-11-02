@@ -363,6 +363,7 @@ export const ProductManagement: React.FC = () => {
   const handleOpenDrawer = (item: 'new' | Product) => {
     if (item === 'new') {
       const autoBarcode = generateEan13Barcode('890');
+      const autoBatchNo = `BAT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
       setFormData({
         sku: '',
         name: '',
@@ -373,7 +374,7 @@ export const ProductManagement: React.FC = () => {
         stock: '' as any,
         minStock: '' as any,
         warehouseZone: zones[0]?.name || 'Zone A — Main Retail Floor',
-        batchNo: '',
+        batchNo: autoBatchNo,
         barcode: autoBarcode,
         imageUrl: '',
         status: 'in_stock',
@@ -1223,7 +1224,17 @@ export const ProductManagement: React.FC = () => {
                         <label className="block font-semibold text-slate-700 dark:text-slate-300">
                           Batch Number Tag
                         </label>
-                        {activeDrawer !== 'new' && (
+                        {activeDrawer === 'new' ? (
+                          <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, batchNo: `BAT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}` })}
+                            className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                            title="Generate fresh batch number tag"
+                          >
+                            <RefreshCw className="w-2.5 h-2.5" />
+                            <span>Generate</span>
+                          </button>
+                        ) : (
                           <span className="flex items-center gap-1 text-[10px] font-mono font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200/60 dark:border-slate-700/60">
                             <Lock className="w-2.5 h-2.5" />
                             Locked on Edit
