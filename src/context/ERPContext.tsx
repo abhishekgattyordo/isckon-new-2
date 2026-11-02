@@ -41,7 +41,7 @@ import {
   INITIAL_SUPPLIERS
 } from '../data/initialData';
 import { GLOBAL_ALL_BRANCHES, isSuperAdmin, isBranchAdmin, getDefaultPermissionsForRole } from '../lib/authUtils';
-import { isProductInZone, allocateFifoCartItems, getActiveBatchPrice } from '../lib/warehouseUtils';
+import { isProductInZone, allocateFifoCartItems, getActiveBatchPrice, getActiveBatch } from '../lib/warehouseUtils';
 import { generateEan13Barcode } from '../lib/barcodeUtils';
 
 interface ERPContextType {
@@ -1902,8 +1902,10 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addToCart = (product: Product, quantity = 1, requestedBatchId?: string) => {
     const availableStock = product.stock ?? 999;
+    const sku = (product.sku || '').trim().toUpperCase();
+
     const existingTotalInCart = cart
-      .filter(item => item.product.id === product.id)
+      .filter(item => (item.product.sku || '').trim().toUpperCase() === sku)
       .reduce((sum, item) => sum + item.quantity, 0);
 
     if (existingTotalInCart + quantity > availableStock) {
@@ -1912,54 +1914,62 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCart(prev => {
-      // 1. If explicit batch was requested (e.g. from scanning a batch barcode)
-      if (requestedBatchId) {
-        const targetBatch = batches.find(b => b.id === requestedBatchId);
-        if (targetBatch) {
-          const batchScopedProduct: Product = {
-            ...product,
-            price: targetBatch.sellingPrice,
-            cost: targetBatch.costPrice,
-            batchNo: targetBatch.batchNo
-          };
-          const existingIndex = prev.findIndex(item => item.product.id === product.id && item.batchId === requestedBatchId);
-          if (existingIndex !== -1) {
-            const updated = [...prev];
-            updated[existingIndex] = {
-              ...updated[existingIndex],
-              quantity: updated[existingIndex].quantity + quantity
-            };
-            return updated;
-          } else {
-            return [...prev, {
-              product: batchScopedProduct,
-              quantity,
-              discountPercent: 0,
-              batchId: targetBatch.id,
-              batchNumber: targetBatch.batchNo,
-              costPrice: targetBatch.costPrice,
-              sellingPrice: targetBatch.sellingPrice
-            }];
-          }
-        }
+      const targetBatch = requestedBatchId 
+        ? batches.find(b => b.id === requestedBatchId)
+        : getActiveBatch(product.sku, batches);
+
+      const bId = targetBatch?.id;
+      const bNum = targetBatch?.batchNo || product.batchNo;
+      const bPrice = targetBatch ? targetBatch.sellingPrice : product.price;
+      const bCost = targetBatch ? targetBatch.costPrice : product.cost;
+
+      const existingIndex = prev.findIndex(item => 
+        (item.product.sku || '').trim().toUpperCase() === sku &&
+        (
+          (bId && item.batchId === bId) ||
+          (bNum && item.batchNumber === bNum) ||
+          (!bId && !bNum && !item.batchId && !item.batchNumber)
+        )
+      );
+
+      let updatedCart = [...prev];
+      if (existingIndex !== -1) {
+        updatedCart[existingIndex] = {
+          ...updatedCart[existingIndex],
+          quantity: updatedCart[existingIndex].quantity + quantity
+        };
+      } else {
+        const batchScopedProduct: Product = {
+          ...product,
+          price: bPrice,
+          cost: bCost,
+          batchNo: bNum
+        };
+        updatedCart.push({
+          product: batchScopedProduct,
+          quantity,
+          discountPercent: 0,
+          batchId: bId,
+          batchNumber: bNum,
+          costPrice: bCost,
+          sellingPrice: bPrice
+        });
       }
 
-      // 2. Standard FIFO allocation across batches (oldest batch first)
-      const targetTotal = existingTotalInCart + quantity;
-      const otherCartItems = prev.filter(item => item.product.id !== product.id);
-      const allocatedBatches = allocateFifoCartItems(product, targetTotal, batches);
+      const map = new Map<string, CartItem>();
+      for (const item of updatedCart) {
+        const itemSku = (item.product?.sku || '').trim().toUpperCase();
+        const batchKey = item.batchId || item.batchNumber || 'default';
+        const key = `${itemSku}__${batchKey}`;
 
-      const newItems: CartItem[] = allocatedBatches.map(alloc => ({
-        product: alloc.batchProduct,
-        quantity: alloc.quantity,
-        discountPercent: 0,
-        batchId: alloc.batchId,
-        batchNumber: alloc.batchNumber,
-        costPrice: alloc.costPrice,
-        sellingPrice: alloc.sellingPrice
-      }));
-
-      return [...otherCartItems, ...newItems];
+        if (map.has(key)) {
+          const existing = map.get(key)!;
+          existing.quantity += item.quantity;
+        } else {
+          map.set(key, { ...item });
+        }
+      }
+      return Array.from(map.values());
     });
   };
 
@@ -1985,23 +1995,27 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCart(prev => {
-      const targetProduct = productObj || prev.find(item => item.product.id === productId)?.product;
-      if (!targetProduct) return prev;
+      const updated = prev.map(item => {
+        if (item.product.id === productId && (item.batchId === batchId || (!batchId && !item.batchId))) {
+          return { ...item, quantity };
+        }
+        return item;
+      });
 
-      const otherItems = prev.filter(item => item.product.id !== productId);
-      const allocatedBatches = allocateFifoCartItems(targetProduct, quantity, batches);
+      const map = new Map<string, CartItem>();
+      for (const item of updated) {
+        const itemSku = (item.product?.sku || '').trim().toUpperCase();
+        const batchKey = item.batchId || item.batchNumber || 'default';
+        const key = `${itemSku}__${batchKey}`;
 
-      const newItems: CartItem[] = allocatedBatches.map(alloc => ({
-        product: alloc.batchProduct,
-        quantity: alloc.quantity,
-        discountPercent: 0,
-        batchId: alloc.batchId,
-        batchNumber: alloc.batchNumber,
-        costPrice: alloc.costPrice,
-        sellingPrice: alloc.sellingPrice
-      }));
-
-      return [...otherItems, ...newItems];
+        if (map.has(key)) {
+          const existing = map.get(key)!;
+          existing.quantity += item.quantity;
+        } else {
+          map.set(key, { ...item });
+        }
+      }
+      return Array.from(map.values());
     });
   };
 

@@ -1484,7 +1484,7 @@ export const POSTerminal: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => updateCartQuantity(item.product.id, Math.max(0, currentTotalForProduct - 1))}
+                        onClick={() => updateCartQuantity(item.product.id, Math.max(0, item.quantity - 1), item.batchId)}
                         className="w-7 h-7 rounded-lg bg-[#FFFFFF] dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 text-[#111827] dark:text-white flex items-center justify-center font-bold text-xs hover:bg-slate-100 cursor-pointer"
                       >
                         <Minus className="w-3.5 h-3.5" />
@@ -1492,13 +1492,13 @@ export const POSTerminal: React.FC = () => {
                       <span className="w-6 text-center font-mono font-semibold text-xs">{item.quantity}</span>
                       <button
                         onClick={() => {
-                          if (currentTotalForProduct + 1 > maxStock) {
+                          if (item.quantity + 1 > maxStock) {
                             quickNotification('Stock Limit Reached', `Cannot exceed available stock of ${maxStock}`, 'warning');
                             return;
                           }
-                          updateCartQuantity(item.product.id, currentTotalForProduct + 1);
+                          updateCartQuantity(item.product.id, item.quantity + 1, item.batchId);
                         }}
-                        disabled={currentTotalForProduct >= maxStock}
+                        disabled={item.quantity >= maxStock}
                         className="w-7 h-7 rounded-lg bg-[#FFFFFF] dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 text-[#111827] dark:text-white flex items-center justify-center font-bold text-xs hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
