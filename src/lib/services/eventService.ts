@@ -22,6 +22,7 @@ export async function getEvents(includeDeleted = false, branchId?: string): Prom
       const dbEvents = await prisma.salesEvent.findMany({
         where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
         orderBy: { startDate: 'desc' },
+        include: { stalls: true }
       });
       let mapped = (dbEvents || []).map(e => ({
         ...e,
@@ -29,6 +30,15 @@ export async function getEvents(includeDeleted = false, branchId?: string): Prom
         status: (e.status || 'upcoming') as any,
         branchId: (e as any).branchId || undefined,
         branchName: (e as any).branchName || undefined,
+        stalls: (e.stalls || []).map(s => ({
+          id: s.id,
+          eventId: s.eventId,
+          stallName: s.stallName,
+          managerName: s.managerName,
+          managerContact: s.managerContact,
+          managerEmail: s.managerEmail,
+          locationSpot: s.locationSpot || undefined,
+        })),
         isDeleted: e.isDeleted || false,
         deletedAt: e.deletedAt ? e.deletedAt.toISOString() : undefined,
         deletedBy: e.deletedBy || undefined,
@@ -65,11 +75,21 @@ export async function getDeletedEvents(): Promise<SalesEvent[]> {
       const dbEvents = await prisma.salesEvent.findMany({
         where: { isDeleted: true },
         orderBy: { deletedAt: 'desc' },
+        include: { stalls: true }
       });
       return dbEvents.map(e => ({
         ...e,
         type: e.type as any,
         status: e.status as any,
+        stalls: (e.stalls || []).map(s => ({
+          id: s.id,
+          eventId: s.eventId,
+          stallName: s.stallName,
+          managerName: s.managerName,
+          managerContact: s.managerContact,
+          managerEmail: s.managerEmail,
+          locationSpot: s.locationSpot || undefined,
+        })),
         isDeleted: true,
         deletedAt: e.deletedAt ? e.deletedAt.toISOString() : new Date().toISOString(),
         deletedBy: e.deletedBy || undefined,
@@ -89,6 +109,7 @@ export async function createEvent(evtData: Omit<SalesEvent, 'id' | 'currentReven
     type: (evtData.type || 'stall_booth') as any,
     status: (evtData.status || 'upcoming') as any,
     currentRevenue: Number(evtData.currentRevenue || 0),
+    stalls: evtData.stalls || [],
     isDeleted: false,
   };
 
@@ -117,12 +138,32 @@ export async function createEvent(evtData: Omit<SalesEvent, 'id' | 'currentReven
           giftsSoldQty: newEvent.giftsSoldQty,
           giftsSoldRevenue: newEvent.giftsSoldRevenue,
           isDeleted: false,
+          stalls: newEvent.stalls && newEvent.stalls.length > 0 ? {
+            create: newEvent.stalls.map(s => ({
+              id: s.id || `stall-${Date.now()}-${Math.random().toString(36).substring(2,6)}`,
+              stallName: s.stallName,
+              managerName: s.managerName,
+              managerContact: s.managerContact,
+              managerEmail: s.managerEmail,
+              locationSpot: s.locationSpot,
+            }))
+          } : undefined
         },
+        include: { stalls: true }
       });
       return {
         ...dbEvent,
         type: dbEvent.type as any,
         status: dbEvent.status as any,
+        stalls: (dbEvent.stalls || []).map(s => ({
+          id: s.id,
+          eventId: s.eventId,
+          stallName: s.stallName,
+          managerName: s.managerName,
+          managerContact: s.managerContact,
+          managerEmail: s.managerEmail,
+          locationSpot: s.locationSpot || undefined,
+        })),
         isDeleted: false,
       } as unknown as SalesEvent;
     }
@@ -281,6 +322,9 @@ export async function getEventAllocations(eventId?: string): Promise<EventAlloca
         damagedQty: Number(r.damagedQty),
         returnedQty: Number(r.returnedQty),
         price: Number(r.price),
+        stallId: r.stallId || undefined,
+        stallName: r.stallName || undefined,
+        managerEmail: r.managerEmail || undefined,
       }));
     }
   } catch (error) {
@@ -306,6 +350,9 @@ export async function saveEventAllocation(data: EventAllocation): Promise<EventA
           price: Number(allocData.price),
           productName: allocData.productName,
           category: allocData.category,
+          stallId: allocData.stallId,
+          stallName: allocData.stallName,
+          managerEmail: allocData.managerEmail,
         },
         create: {
           id: allocData.id,
@@ -318,6 +365,9 @@ export async function saveEventAllocation(data: EventAllocation): Promise<EventA
           damagedQty: Number(allocData.damagedQty || 0),
           returnedQty: Number(allocData.returnedQty || 0),
           price: Number(allocData.price),
+          stallId: allocData.stallId,
+          stallName: allocData.stallName,
+          managerEmail: allocData.managerEmail,
         }
       });
       return {
@@ -331,6 +381,9 @@ export async function saveEventAllocation(data: EventAllocation): Promise<EventA
         damagedQty: Number(saved.damagedQty),
         returnedQty: Number(saved.returnedQty),
         price: Number(saved.price),
+        stallId: saved.stallId || undefined,
+        stallName: saved.stallName || undefined,
+        managerEmail: saved.managerEmail || undefined,
       };
     }
   } catch (error: any) {

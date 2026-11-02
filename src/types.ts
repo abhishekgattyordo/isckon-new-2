@@ -225,6 +225,16 @@ export interface POSOrder {
   deletedBy?: string;
 }
 
+export interface EventStall {
+  id: string;
+  eventId?: string;
+  stallName: string;
+  managerName: string;
+  managerContact: string;
+  managerEmail: string;
+  locationSpot?: string;
+}
+
 export interface SalesEvent {
   id: string;
   name: string;
@@ -246,6 +256,7 @@ export interface SalesEvent {
   giftsSoldRevenue?: number;
   branchId?: string;
   branchName?: string;
+  stalls?: EventStall[];
   isDeleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;
@@ -357,6 +368,9 @@ export interface EventAllocation {
   damagedQty: number;
   returnedQty: number;
   price: number;
+  stallId?: string;
+  stallName?: string;
+  managerEmail?: string;
 }
 
 export interface EventTransaction {

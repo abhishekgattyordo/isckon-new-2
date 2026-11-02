@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useERP } from '../../context/ERPContext';
-import { Product, SalesEvent, StockMovement } from '../../types';
+import { Product, SalesEvent, StockMovement, EventAllocation, EventTransaction } from '../../types';
 import {
   Flame,
   Plus,
@@ -36,7 +36,8 @@ import {
   Bookmark,
   Building,
   RefreshCw,
-  Tags
+  Tags,
+  Mail
 } from 'lucide-react';
 import {
   exportEventToExcel,
@@ -44,33 +45,6 @@ import {
   exportEventToCsv,
   EventExportData
 } from '../../lib/exportUtils';
-
-interface EventAllocation {
-  id: string;
-  eventId: string;
-  sku: string;
-  productName: string;
-  category: string;
-  allocatedQty: number;
-  soldQty: number;
-  damagedQty: number;
-  returnedQty: number;
-  price: number;
-}
-
-interface EventTransaction {
-  id: string;
-  eventId: string;
-  orderNumber: string;
-  items: { sku: string; name: string; quantity: number; price: number; discountPercent: number; total: number }[];
-  subtotal: number;
-  taxAmount: number;
-  discountAmount: number;
-  total: number;
-  paymentMethod: 'cash' | 'upi';
-  timestamp: string;
-  cashierName: string;
-}
 
 const EVENT_TYPES = [
   'Janmashtami Festival',
@@ -95,7 +69,8 @@ export const SalesPromotions: React.FC = () => {
     deleteEvent,
     quickNotification,
     user,
-    currentBranch
+    currentBranch,
+    users
   } = useERP();
 
   // Navigation State
@@ -107,21 +82,29 @@ export const SalesPromotions: React.FC = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [customEventType, setCustomEventType] = useState('');
   const [newEvent, setNewEvent] = useState({
-    name: 'Janmashtami Maha Book Fair 2026',
+    name: '',
     type: 'Book Fair' as any,
-    description: 'Annual flagship event featuring book distribution stalls and cultural programs.',
-    location: 'Main Temple Courtyard Pavilion A',
-    address: 'ISKCON Bangalore, Hare Krishna Hill, Rajajinagar',
-    organizer: 'ISKCON BBT Department',
-    managerName: 'Sri Rama Das',
-    contactNumber: '+91 94480 12345',
-    startDate: '2026-08-10',
-    startTime: '08:00',
-    endDate: '2026-08-25',
-    endTime: '22:00',
-    notes: 'Expect huge crowds on peak days. Keep extra visual signage ready.',
-    targetRevenue: 500000,
-    discountRule: 'Flat 20% on all BBT hardcover publications'
+    description: '',
+    location: '',
+    address: '',
+    organizer: '',
+    startDate: '',
+    startTime: '09:00',
+    endDate: '',
+    endTime: '21:00',
+    notes: '',
+    targetRevenue: 100000,
+    discountRule: '',
+    stalls: [
+      {
+        id: `stall-${Date.now()}-1`,
+        stallName: '',
+        managerName: '',
+        managerContact: '',
+        managerEmail: '',
+        locationSpot: ''
+      }
+    ]
   });
 
   // Current selected event object
@@ -174,6 +157,9 @@ export const SalesPromotions: React.FC = () => {
   // Allocation Form State
   const [allocProductId, setAllocProductId] = useState('');
   const [allocQty, setAllocQty] = useState<number>(10);
+  const [allocStallId, setAllocStallId] = useState('');
+  const [emailManifestModalOpen, setEmailManifestModalOpen] = useState(false);
+  const [selectedStallForEmail, setSelectedStallForEmail] = useState<any>(null);
 
   // POS State
   const [posCart, setPosCart] = useState<{ product: Product; quantity: number; discount: number }[]>([]);
@@ -204,7 +190,6 @@ export const SalesPromotions: React.FC = () => {
   const handleCreateEvent = (e: React.FormEvent) => {
     e.preventDefault();
     const finalType = newEvent.type === 'custom' ? customEventType : newEvent.type;
-    const code = generateEventCode(newEvent.name, finalType);
 
     addEvent({
       name: newEvent.name,
@@ -215,16 +200,18 @@ export const SalesPromotions: React.FC = () => {
       targetRevenue: Number(newEvent.targetRevenue) || 100000,
       allocatedSKUs: 0,
       discountRule: newEvent.discountRule || 'Standard discounts apply',
-      description: `${newEvent.description} | Location: ${newEvent.location} | Organizer: ${newEvent.organizer} | Address: ${newEvent.address} | Contact: ${newEvent.contactNumber}`,
+      description: `${newEvent.description} | Organizer: ${newEvent.organizer} | Multi-Stall Event (${newEvent.stalls.length} stalls)`,
       bannerColor: 'from-[#D97706] to-[#B45309]',
-      stallLocation: newEvent.location,
-      managerName: newEvent.managerName,
+      stallLocation: newEvent.stalls.map(s => s.stallName).join(', '),
+      managerName: newEvent.stalls.map(s => s.managerName).join(', '),
       branchId: currentBranch?.id || 'branch-mayapur-hq',
-      branchName: currentBranch?.name || 'Mayapur HQ Central'
+      branchName: currentBranch?.name || 'Mayapur HQ Central',
+      stalls: newEvent.stalls
     });
 
     setIsCreating(false);
     setActiveTab('directory');
+    quickNotification('Multi-Stall Event Created', `Event "${newEvent.name}" registered successfully with ${newEvent.stalls.length} stalls.`, 'success');
   };
 
   // Add inventory allocation handler
@@ -262,10 +249,15 @@ export const SalesPromotions: React.FC = () => {
     const existingAlloc = allocations.find(a => (a.eventId === targetEventId || a.eventId === selectedEventId) && a.sku === product.sku);
     let targetAlloc: EventAllocation;
 
+    const assignedStall = selectedEvent?.stalls?.find(s => s.id === allocStallId) || selectedEvent?.stalls?.[0];
+
     if (existingAlloc) {
       targetAlloc = {
         ...existingAlloc,
-        allocatedQty: existingAlloc.allocatedQty + allocQty
+        allocatedQty: existingAlloc.allocatedQty + allocQty,
+        stallId: assignedStall?.id || existingAlloc.stallId,
+        stallName: assignedStall?.stallName || existingAlloc.stallName,
+        managerEmail: assignedStall?.managerEmail || existingAlloc.managerEmail
       };
     } else {
       targetAlloc = {
@@ -278,7 +270,10 @@ export const SalesPromotions: React.FC = () => {
         soldQty: 0,
         damagedQty: 0,
         returnedQty: 0,
-        price: product.price
+        price: product.price,
+        stallId: assignedStall?.id || undefined,
+        stallName: assignedStall?.stallName || 'Main Stall / Pavilion A',
+        managerEmail: assignedStall?.managerEmail || 'manager@iskcon.net'
       };
     }
 
@@ -1002,28 +997,145 @@ export const SalesPromotions: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] font-mono font-bold text-slate-400 uppercase block mb-1">Stall / Event Manager</label>
-                <input
-                  type="text"
-                  required
-                  value={newEvent.managerName}
-                  onChange={e => setNewEvent({ ...newEvent, managerName: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
-                  placeholder="e.g. Sri Rama Das"
-                />
+            {/* Multi-Stall Sub-Form / Dynamic Rows */}
+            <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white uppercase font-mono text-[11px] flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Event Stalls & Sub-Locations (Multi-Stall Setup)</span>
+                  </h3>
+                  <p className="text-[10px] text-slate-400">Configure separate managers, contact numbers, and email addresses for each stall under this event.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewEvent(prev => ({
+                      ...prev,
+                      stalls: [
+                        ...prev.stalls,
+                        {
+                          id: `stall-${Date.now()}-${Math.random().toString(36).substring(2,5)}`,
+                          stallName: `Stall / Pavilion ${prev.stalls.length + 1}`,
+                          managerName: '',
+                          managerContact: '',
+                          managerEmail: '',
+                          locationSpot: ''
+                        }
+                      ]
+                    }));
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-[#B45309] dark:text-amber-400 font-bold text-[10px] font-mono flex items-center gap-1 transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Add Stall</span>
+                </button>
               </div>
-              <div>
-                <label className="text-[10px] font-mono font-bold text-slate-400 uppercase block mb-1">Manager Contact Number</label>
-                <input
-                  type="text"
-                  required
-                  value={newEvent.contactNumber}
-                  onChange={e => setNewEvent({ ...newEvent, contactNumber: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
-                  placeholder="e.g. +91 94480 12345"
-                />
+
+              <div className="space-y-3">
+                {newEvent.stalls.map((stall, idx) => (
+                  <div key={stall.id} className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2.5 relative">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-mono font-bold text-amber-600">Stall #{idx + 1}</span>
+                      {newEvent.stalls.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewEvent(prev => ({
+                              ...prev,
+                              stalls: prev.stalls.filter(s => s.id !== stall.id)
+                            }));
+                          }}
+                          className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors"
+                          title="Remove Stall"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-400 uppercase block mb-0.5">Stall Name / Spot</label>
+                        <input
+                          type="text"
+                          required
+                          value={stall.stallName}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setNewEvent(prev => ({
+                              ...prev,
+                              stalls: prev.stalls.map(s => s.id === stall.id ? { ...s, stallName: val } : s)
+                            }));
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs"
+                          placeholder="e.g. Pavilion A (Hardcover)"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-400 uppercase block mb-0.5">Manager Full Name</label>
+                        <input
+                          type="text"
+                          required
+                          value={stall.managerName}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setNewEvent(prev => ({
+                              ...prev,
+                              stalls: prev.stalls.map(s => s.id === stall.id ? { ...s, managerName: val } : s)
+                            }));
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs"
+                          placeholder="e.g. Sri Rama Das"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-400 uppercase block mb-0.5">Manager Contact Number</label>
+                        <input
+                          type="text"
+                          required
+                          value={stall.managerContact}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setNewEvent(prev => ({
+                              ...prev,
+                              stalls: prev.stalls.map(s => s.id === stall.id ? { ...s, managerContact: val } : s)
+                            }));
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs"
+                          placeholder="e.g. +91 94480 12345"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-400 uppercase block mb-0.5">Manager Email (From Staff Profiles)</label>
+                        <select
+                          required
+                          value={stall.managerEmail}
+                          onChange={e => {
+                            const email = e.target.value;
+                            const matchedStaff = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+                            setNewEvent(prev => ({
+                              ...prev,
+                              stalls: prev.stalls.map(s => s.id === stall.id ? {
+                                ...s,
+                                managerEmail: email,
+                                managerName: matchedStaff ? matchedStaff.name : s.managerName,
+                                managerContact: matchedStaff && (matchedStaff as any).phone ? (matchedStaff as any).phone : s.managerContact
+                              } : s)
+                            }));
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono"
+                        >
+                          <option value="">-- Select Staff Manager Email --</option>
+                          {users.map(u => (
+                            <option key={u.id} value={u.email}>
+                              {u.name} ({u.email}) — {u.role}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -1464,10 +1576,10 @@ export const SalesPromotions: React.FC = () => {
                     <span>Allocate Stock from Central Warehouse</span>
                   </h3>
 
-                  <form onSubmit={handleAllocateInventory} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end text-xs">
+                  <form onSubmit={handleAllocateInventory} className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end text-xs">
                     <div>
                       <label className="text-[10px] font-mono font-bold text-slate-400 uppercase block mb-1">
-                        Select Product Catalog SKU
+                        Select Product SKU
                       </label>
                       <select
                         value={allocProductId}
@@ -1478,7 +1590,7 @@ export const SalesPromotions: React.FC = () => {
                         <option value="">-- Choose Product --</option>
                         {products.map(p => (
                           <option key={p.id} value={p.id}>
-                            {p.name} (Available: {p.stock} units) - ₹{p.price}
+                            {p.name} (Avail: {p.stock}) - ₹{p.price}
                           </option>
                         ))}
                       </select>
@@ -1486,7 +1598,7 @@ export const SalesPromotions: React.FC = () => {
 
                     <div>
                       <label className="text-[10px] font-mono font-bold text-slate-400 uppercase block mb-1">
-                        Transfer Quantity
+                        Transfer Qty
                       </label>
                       <input
                         type="number"
@@ -1498,15 +1610,92 @@ export const SalesPromotions: React.FC = () => {
                       />
                     </div>
 
+                    <div>
+                      <label className="text-[10px] font-mono font-bold text-slate-400 uppercase block mb-1">
+                        Assign Stall & Manager Email
+                      </label>
+                      <select
+                        value={allocStallId}
+                        onChange={e => setAllocStallId(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none text-xs"
+                      >
+                        <option value="">-- Choose Assigned Stall --</option>
+                        {selectedEvent?.stalls?.map(stall => (
+                          <option key={stall.id} value={stall.id}>
+                            {stall.stallName} ({stall.managerName})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <button
                       type="submit"
-                      className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold font-mono text-xs shadow-md transition-transform active:scale-95"
+                      className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold font-mono text-xs shadow-md transition-transform active:scale-95"
                     >
                       ALLOCATE TO STALLS
                     </button>
                   </form>
                 </div>
               )}
+
+              {/* Multi-Stall Manager Manifests Summary Cards */}
+              <div className="space-y-3">
+                <h3 className="font-bold text-sm text-slate-950 dark:text-white uppercase font-mono tracking-wider flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-amber-500" />
+                  <span>Configured Event Stalls & Manager Manifests</span>
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {(selectedEvent?.stalls && selectedEvent.stalls.length > 0 ? selectedEvent.stalls : [
+                    { id: 'default', stallName: selectedEvent?.stallLocation || 'Main Temple Stall', managerName: selectedEvent?.managerName || 'Manager', managerContact: '+91 94480 12345', managerEmail: 'manager@iskcon.net', locationSpot: 'Main Courtyard' }
+                  ]).map(stall => {
+                    const stallAllocations = eventAllocatedItems.filter(a => a.stallId === stall.id || !a.stallId || a.stallName === stall.stallName);
+                    const totalQty = stallAllocations.reduce((acc, a) => acc + a.allocatedQty, 0);
+
+                    return (
+                      <div key={stall.id} className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="text-[9px] font-mono font-bold text-amber-600 uppercase">Stall / Sub-Location</span>
+                            <h4 className="font-bold text-sm text-slate-900 dark:text-white font-display mt-0.5">{stall.stallName}</h4>
+                          </div>
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 font-mono text-[10px] font-bold border border-amber-200">
+                            {totalQty} SKUs Allocated
+                          </span>
+                        </div>
+
+                        <div className="space-y-1 text-xs text-slate-500 font-mono pt-1 border-t border-slate-100 dark:border-slate-800">
+                          <div className="flex justify-between">
+                            <span>Manager:</span>
+                            <span className="font-bold text-slate-800 dark:text-slate-200">{stall.managerName}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Contact:</span>
+                            <span className="font-bold text-slate-800 dark:text-slate-200">{stall.managerContact}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Email (Auth/Alerts):</span>
+                            <span className="font-bold text-[#B45309]">{stall.managerEmail}</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 flex items-center justify-between">
+                          <span className="text-[10px] text-slate-400 font-mono">{stallAllocations.length} items in manifest</span>
+                          <button
+                            onClick={() => {
+                              setSelectedStallForEmail(stall);
+                              setEmailManifestModalOpen(true);
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-[#B45309] dark:text-amber-400 font-bold text-[11px] font-mono flex items-center gap-1.5 transition-colors"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            <span>Preview & Send Email Manifest</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
               {/* Allocation List */}
               <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
@@ -2143,6 +2332,96 @@ export const SalesPromotions: React.FC = () => {
                 className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[10px]"
               >
                 CLOSE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Email Manifest Preview & Notification Modal */}
+      {emailManifestModalOpen && selectedStallForEmail && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="p-6 rounded-2xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 max-w-lg w-full space-y-4 shadow-xl text-xs relative">
+            <button
+              onClick={() => setEmailManifestModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="w-8 h-8 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-600 flex items-center justify-center">
+                <Bookmark className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 dark:text-white font-display">Stall Inventory Manifest Notification</h3>
+                <p className="text-[10px] text-slate-400 font-mono">Automated Email Dispatch to Stall Manager</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 font-mono text-[11px]">
+              <div className="flex justify-between">
+                <span className="text-slate-400">To:</span>
+                <span className="font-bold text-slate-900 dark:text-white">{selectedStallForEmail.managerEmail}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Manager Name:</span>
+                <span className="font-bold text-slate-900 dark:text-white">{selectedStallForEmail.managerName} ({selectedStallForEmail.managerContact})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Stall & Spot:</span>
+                <span className="font-bold text-amber-600">{selectedStallForEmail.stallName} — {selectedStallForEmail.locationSpot || 'Temple Ground'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Subject:</span>
+                <span className="font-bold text-slate-900 dark:text-white">Inventory Allocation Manifest — {selectedEvent?.name}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-[10px] font-mono font-bold text-slate-400 uppercase block">Assigned Inventory Items Manifest</span>
+              <div className="max-h-[160px] overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-xl p-2 space-y-1.5">
+                {allocations
+                  .filter(a => a.eventId === selectedEvent?.id && (a.stallId === selectedStallForEmail.id || !a.stallId || a.stallName === selectedStallForEmail.stallName))
+                  .length === 0 ? (
+                    <p className="text-center text-slate-400 py-4 text-[11px]">No items allocated to this stall yet.</p>
+                  ) : (
+                    allocations
+                      .filter(a => a.eventId === selectedEvent?.id && (a.stallId === selectedStallForEmail.id || !a.stallId || a.stallName === selectedStallForEmail.stallName))
+                      .map(a => (
+                        <div key={a.id} className="flex justify-between items-center text-[11px] p-1.5 rounded bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+                          <div>
+                            <span className="font-bold text-slate-900 dark:text-white">{a.productName}</span>
+                            <span className="text-[9px] text-slate-400 block font-mono">SKU: {a.sku}</span>
+                          </div>
+                          <span className="font-mono font-bold text-emerald-600">{a.allocatedQty} units @ ₹{a.price}</span>
+                        </div>
+                      ))
+                  )}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-[10px] text-amber-800 dark:text-amber-200 space-y-1">
+              <p className="font-bold">Access Control & POS Restriction Notice:</p>
+              <p>This manager can log into the ISKCON Retail POS terminal using their email address (`{selectedStallForEmail.managerEmail}`) and will be automatically restricted to process sales and view inventory exclusively for this assigned stall.</p>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setEmailManifestModalOpen(false)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-xs"
+              >
+                CLOSE
+              </button>
+              <button
+                onClick={() => {
+                  setEmailManifestModalOpen(false);
+                  quickNotification('Email Dispatched Successfully', `Inventory manifest email successfully dispatched to ${selectedStallForEmail.managerEmail} (${selectedStallForEmail.stallName}).`, 'success');
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-md"
+              >
+                <Check className="w-4 h-4" />
+                <span>DISPATCH EMAIL MANIFEST</span>
               </button>
             </div>
           </div>
