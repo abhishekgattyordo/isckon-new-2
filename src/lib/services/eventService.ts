@@ -284,9 +284,27 @@ export async function updateEventService(id: string, updates: Partial<SalesEvent
       if (updates.giftsSoldQty !== undefined) dataToUpdate.giftsSoldQty = Number(updates.giftsSoldQty);
       if (updates.giftsSoldRevenue !== undefined) dataToUpdate.giftsSoldRevenue = Number(updates.giftsSoldRevenue);
 
+      if (updates.stalls && Array.isArray(updates.stalls)) {
+        await prisma.eventStall.deleteMany({ where: { eventId: id } });
+        if (updates.stalls.length > 0) {
+          await prisma.eventStall.createMany({
+            data: updates.stalls.map(s => ({
+              id: s.id || `stall-${Date.now()}-${Math.random().toString(36).substring(2,6)}`,
+              eventId: id,
+              stallName: s.stallName,
+              managerName: s.managerName,
+              managerContact: s.managerContact,
+              managerEmail: s.managerEmail,
+              locationSpot: s.locationSpot || null,
+            }))
+          });
+        }
+      }
+
       const updated = await prisma.salesEvent.update({
         where: { id },
         data: dataToUpdate,
+        include: { stalls: true }
       });
 
       return {
@@ -294,6 +312,15 @@ export async function updateEventService(id: string, updates: Partial<SalesEvent
         type: updated.type as any,
         status: updated.status as any,
         isDeleted: updated.isDeleted || false,
+        stalls: (updated.stalls || []).map(s => ({
+          id: s.id,
+          eventId: s.eventId,
+          stallName: s.stallName,
+          managerName: s.managerName,
+          managerContact: s.managerContact,
+          managerEmail: s.managerEmail,
+          locationSpot: s.locationSpot || undefined,
+        })),
       } as unknown as SalesEvent;
     }
   } catch (error) {
@@ -315,23 +342,21 @@ export async function getEventAllocations(eventId?: string): Promise<EventAlloca
         where: eventId ? { eventId } : undefined,
         orderBy: { createdAt: 'desc' }
       });
-      if (records && records.length > 0) {
-        return records.map(r => ({
-          id: r.id,
-          eventId: r.eventId,
-          sku: r.sku,
-          productName: r.productName,
-          category: r.category,
-          allocatedQty: Number(r.allocatedQty),
-          soldQty: Number(r.soldQty),
-          damagedQty: Number(r.damagedQty),
-          returnedQty: Number(r.returnedQty),
-          price: Number(r.price),
-          stallId: r.stallId || undefined,
-          stallName: r.stallName || undefined,
-          managerEmail: r.managerEmail || undefined,
-        }));
-      }
+      return records.map(r => ({
+        id: r.id,
+        eventId: r.eventId,
+        sku: r.sku,
+        productName: r.productName,
+        category: r.category,
+        allocatedQty: Number(r.allocatedQty),
+        soldQty: Number(r.soldQty),
+        damagedQty: Number(r.damagedQty),
+        returnedQty: Number(r.returnedQty),
+        price: Number(r.price),
+        stallId: r.stallId || undefined,
+        stallName: r.stallName || undefined,
+        managerEmail: r.managerEmail || undefined,
+      }));
     }
   } catch (error) {
     console.warn('Prisma getEventAllocations failed:', error);
@@ -376,7 +401,7 @@ export async function saveEventAllocation(data: EventAllocation): Promise<EventA
           managerEmail: allocData.managerEmail,
         }
       });
-      return {
+      const result = {
         id: saved.id,
         eventId: saved.eventId,
         sku: saved.sku,
@@ -391,6 +416,13 @@ export async function saveEventAllocation(data: EventAllocation): Promise<EventA
         stallName: saved.stallName || undefined,
         managerEmail: saved.managerEmail || undefined,
       };
+      const memIdx = MemoryDb.eventAllocations.findIndex(a => a.id === result.id);
+      if (memIdx !== -1) {
+        MemoryDb.eventAllocations[memIdx] = result;
+      } else {
+        MemoryDb.eventAllocations.push(result);
+      }
+      return result;
     }
   } catch (error: any) {
     console.error('Prisma saveEventAllocation failed:', error);

@@ -365,7 +365,18 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [allOrders, setAllOrders] = useState<POSOrder[]>([]);
-  const [allEvents, setAllEvents] = useState<SalesEvent[]>([]);
+  const [allEvents, setAllEvents] = useState<SalesEvent[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iskcon_erp_all_events');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+    }
+    return [];
+  });
   const [allMovements, setAllMovements] = useState<StockMovement[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
@@ -928,17 +939,47 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         if (eventsRes.success && Array.isArray(eventsRes.events)) {
-          const formattedEvents = eventsRes.events.map((e: any) => ({
+          const dbEvents = eventsRes.events.map((e: any) => ({
             ...e,
             status: e?.status || 'upcoming',
             currentRevenue: Number(e?.currentRevenue || 0),
             targetRevenue: Number(e?.targetRevenue || 0),
-            allocatedSKUs: Number(e?.allocatedSKUs || 0)
+            allocatedSKUs: Number(e?.allocatedSKUs || 0),
+            stalls: e?.stalls || []
           }));
-          setAllEvents(formattedEvents);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('iskcon_erp_all_events', JSON.stringify(formattedEvents));
-          }
+          setAllEvents(prev => {
+            const dbMap = new Map<string, SalesEvent>();
+            dbEvents.forEach((ev: SalesEvent) => dbMap.set(ev.id, ev));
+
+            const merged = [...dbEvents];
+            for (const localEv of prev) {
+              if (!dbMap.has(localEv.id)) {
+                merged.push(localEv);
+                // Background sync unpersisted event to DB
+                fetch('/api/events', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(localEv)
+                }).catch(() => {});
+              } else {
+                // If local event has stalls and DB event stalls are missing, sync stalls to DB
+                const dbEv = dbMap.get(localEv.id)!;
+                if ((!dbEv.stalls || dbEv.stalls.length === 0) && localEv.stalls && localEv.stalls.length > 0) {
+                  dbEv.stalls = localEv.stalls;
+                  fetch('/api/events', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: dbEv.id, updates: { stalls: localEv.stalls } })
+                  }).catch(() => {});
+                }
+              }
+            }
+
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('iskcon_erp_all_events', JSON.stringify(merged));
+            }
+            return merged;
+          });
         }
 
         if (usersRes.success && Array.isArray(usersRes.users) && usersRes.users.length > 0) {
@@ -959,11 +1000,27 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
-        if (allocsRes.success && Array.isArray(allocsRes.allocations) && allocsRes.allocations.length > 0) {
-          setAllocations(allocsRes.allocations);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('iskcon_erp_allocations', JSON.stringify(allocsRes.allocations));
-          }
+        if (allocsRes.success && Array.isArray(allocsRes.allocations)) {
+          setAllocations(prev => {
+            const dbMap = new Map<string, EventAllocation>();
+            allocsRes.allocations.forEach((a: EventAllocation) => dbMap.set(a.id, a));
+
+            // Any local allocation not yet in DB should be preserved and synced
+            const unsynced = prev.filter(p => !dbMap.has(p.id));
+            unsynced.forEach(a => {
+              fetch('/api/events/allocations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(a)
+              }).catch(() => {});
+            });
+
+            const merged = [...allocsRes.allocations, ...unsynced];
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('iskcon_erp_allocations', JSON.stringify(merged));
+            }
+            return merged;
+          });
         }
 
         if (batchesRes.success && Array.isArray(batchesRes.batches) && batchesRes.batches.length > 0) {

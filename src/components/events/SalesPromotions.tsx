@@ -70,12 +70,21 @@ export const SalesPromotions: React.FC = () => {
     quickNotification,
     user,
     currentBranch,
-    users
+    users,
+    allocations,
+    setAllocations,
+    fetchAllocations
   } = useERP();
 
   // Navigation State
   const [activeTab, setActiveTab] = useState<'directory' | 'workspace'>('directory');
-  const [selectedEventId, setSelectedEventId] = useState<string>('evt-2026-01');
+  const [selectedEventId, setSelectedEventId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iskcon_erp_selected_event_id');
+      if (stored) return stored;
+    }
+    return 'evt-2026-01';
+  });
   const [workspaceSubTab, setWorkspaceSubTab] = useState<'dashboard' | 'inventory' | 'pos' | 'reports'>('dashboard');
 
   // Form States
@@ -110,8 +119,7 @@ export const SalesPromotions: React.FC = () => {
   // Current selected event object
   const selectedEvent = events?.find(e => e?.id === selectedEventId) || events?.[0] || null;
 
-  // Dynamic allocations & transactions state from database
-  const [allocations, setAllocations] = useState<EventAllocation[]>([]);
+  // Dynamic transactions state from database
   const [eventTransactions, setEventTransactions] = useState<EventTransaction[]>([]);
   const [isLoadingEventData, setIsLoadingEventData] = useState(false);
 
@@ -119,7 +127,11 @@ export const SalesPromotions: React.FC = () => {
   useEffect(() => {
     if (events.length > 0) {
       if (!selectedEventId || !events.some(e => e.id === selectedEventId)) {
-        setSelectedEventId(events[0].id);
+        const fallbackId = events[0].id;
+        setSelectedEventId(fallbackId);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('iskcon_erp_selected_event_id', fallbackId);
+        }
       }
     }
   }, [events, selectedEventId]);
@@ -135,7 +147,14 @@ export const SalesPromotions: React.FC = () => {
       ]);
 
       if (allocRes.success && Array.isArray(allocRes.allocations)) {
-        setAllocations(allocRes.allocations);
+        setAllocations(prev => {
+          const otherEventsAllocs = prev.filter(a => a.eventId !== eventId);
+          const updated = [...otherEventsAllocs, ...allocRes.allocations];
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_allocations', JSON.stringify(updated));
+          }
+          return updated;
+        });
       }
       if (txRes.success && Array.isArray(txRes.transactions)) {
         setEventTransactions(txRes.transactions);
@@ -187,16 +206,18 @@ export const SalesPromotions: React.FC = () => {
   };
 
   // Create Event Handler
-  const handleCreateEvent = (e: React.FormEvent) => {
+  const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalType = newEvent.type === 'custom' ? customEventType : newEvent.type;
+    const eventId = `evt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-    addEvent({
+    const createdEvent = {
+      id: eventId,
       name: newEvent.name,
       type: finalType.toLowerCase().replace(/\s+/g, '_') as any,
       startDate: `${newEvent.startDate}T${newEvent.startTime}:00Z`,
       endDate: `${newEvent.endDate}T${newEvent.endTime}:00Z`,
-      status: 'upcoming',
+      status: 'upcoming' as const,
       targetRevenue: Number(newEvent.targetRevenue) || 100000,
       allocatedSKUs: 0,
       discountRule: newEvent.discountRule || 'Standard discounts apply',
@@ -206,11 +227,17 @@ export const SalesPromotions: React.FC = () => {
       managerName: newEvent.stalls.map(s => s.managerName).join(', '),
       branchId: currentBranch?.id || 'branch-mayapur-hq',
       branchName: currentBranch?.name || 'Mayapur HQ Central',
-      stalls: newEvent.stalls
-    });
+      stalls: newEvent.stalls.map(s => ({ ...s, eventId }))
+    };
 
+    await addEvent(createdEvent);
+    setSelectedEventId(eventId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('iskcon_erp_selected_event_id', eventId);
+    }
     setIsCreating(false);
-    setActiveTab('directory');
+    setActiveTab('workspace');
+    setWorkspaceSubTab('inventory');
     quickNotification('Multi-Stall Event Created', `Event "${newEvent.name}" registered successfully with ${newEvent.stalls.length} stalls.`, 'success');
   };
 
@@ -245,11 +272,15 @@ export const SalesPromotions: React.FC = () => {
       status: (product.stock - allocQty) <= product.minStock ? 'low_stock' : 'in_stock'
     });
 
-    // Check if allocation already exists
-    const existingAlloc = allocations.find(a => (a.eventId === targetEventId || a.eventId === selectedEventId) && a.sku === product.sku);
-    let targetAlloc: EventAllocation;
-
     const assignedStall = selectedEvent?.stalls?.find(s => s.id === allocStallId) || selectedEvent?.stalls?.[0];
+
+    // Check if allocation already exists specifically for this event AND stall
+    const existingAlloc = allocations.find(a => 
+      (a.eventId === targetEventId || a.eventId === selectedEventId) && 
+      a.sku === product.sku &&
+      (assignedStall ? a.stallId === assignedStall.id : true)
+    );
+    let targetAlloc: EventAllocation;
 
     if (existingAlloc) {
       targetAlloc = {
@@ -277,15 +308,20 @@ export const SalesPromotions: React.FC = () => {
       };
     }
 
-    // Immediate optimistic state update
+    // Immediate optimistic state update with localStorage persistence
     setAllocations(prev => {
       const idx = prev.findIndex(a => a.id === targetAlloc.id);
+      let updated: EventAllocation[];
       if (idx !== -1) {
-        const copy = [...prev];
-        copy[idx] = targetAlloc;
-        return copy;
+        updated = [...prev];
+        updated[idx] = targetAlloc;
+      } else {
+        updated = [...prev, targetAlloc];
       }
-      return [...prev, targetAlloc];
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('iskcon_erp_allocations', JSON.stringify(updated));
+      }
+      return updated;
     });
 
     // Persist allocation to PostgreSQL backend
@@ -297,7 +333,13 @@ export const SalesPromotions: React.FC = () => {
       });
       const data = await res.json();
       if (data.success && data.allocation) {
-        setAllocations(prev => prev.map(a => a.id === targetAlloc.id ? data.allocation : a));
+        setAllocations(prev => {
+          const finalAllocs = prev.map(a => a.id === targetAlloc.id ? data.allocation : a);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('iskcon_erp_allocations', JSON.stringify(finalAllocs));
+          }
+          return finalAllocs;
+        });
       }
     } catch (err) {
       console.warn('Error saving allocation to backend:', err);
@@ -340,7 +382,13 @@ export const SalesPromotions: React.FC = () => {
       returnedQty: returnedInput
     };
 
-    setAllocations(prev => prev.map(a => a.id === allocId ? updatedAlloc : a));
+    setAllocations(prev => {
+      const updated = prev.map(a => a.id === allocId ? updatedAlloc : a);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('iskcon_erp_allocations', JSON.stringify(updated));
+      }
+      return updated;
+    });
     setEditingAllocationId(null);
 
     try {
@@ -476,6 +524,9 @@ export const SalesPromotions: React.FC = () => {
       return a;
     });
     setAllocations(updatedAllocs);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('iskcon_erp_allocations', JSON.stringify(updatedAllocs));
+    }
 
     // Append to transactions list
     setEventTransactions(prev => [newTx, ...prev]);
@@ -924,6 +975,9 @@ export const SalesPromotions: React.FC = () => {
                       <button
                         onClick={() => {
                           setSelectedEventId(event.id);
+                          if (typeof window !== 'undefined') {
+                            localStorage.setItem('iskcon_erp_selected_event_id', event.id);
+                          }
                           setWorkspaceSubTab('dashboard');
                           setActiveTab('workspace');
                         }}
@@ -1283,7 +1337,13 @@ export const SalesPromotions: React.FC = () => {
                   <span className="text-[10px] text-slate-400 block font-mono">SELECTED WORKSPACE EVENT</span>
                   <select
                     value={selectedEventId}
-                    onChange={e => setSelectedEventId(e.target.value)}
+                    onChange={e => {
+                      const id = e.target.value;
+                      setSelectedEventId(id);
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('iskcon_erp_selected_event_id', id);
+                      }
+                    }}
                     className="font-bold text-sm bg-transparent border-none text-slate-900 dark:text-white focus:outline-none cursor-pointer"
                   >
                     {(events || []).map(ev => {
