@@ -554,7 +554,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ initialTab }) => {
                         style={{ backgroundColor: preset.value }}
                       />
                       <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 truncate">
-                        {preset.name.split(' ')[0]}
+                        {(preset?.name || '').split(' ')[0]}
                       </span>
                     </button>
                   ))}

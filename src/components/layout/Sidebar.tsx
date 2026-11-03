@@ -107,7 +107,7 @@ export const Sidebar: React.FC = () => {
 
   const lowStockCount = products.filter(p => p.status === 'low_stock' || p.status === 'out_of_stock').length;
   const isCollapsed = sidebarCollapsed && !mobileMenuOpen;
-  const userInitials = user?.name ? user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'IR';
+  const userInitials = (user?.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || 'IR';
 
   // Helper to determine if a sidebar label maps to active state
   const isLabelActive = (item: NavItem) => {

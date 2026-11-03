@@ -337,7 +337,7 @@ export const UserManagement: React.FC = () => {
       {/* Main Staff Registry Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredUsers.map(u => {
-          const initials = u.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+          const initials = (u?.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
           const isMe = u.id === currentUser.id;
           const isSuper = isSuperAdmin(u);
           const isEvent = u.role === 'Event Staff / Stall Manager' || isEventStaff(u);

@@ -215,6 +215,77 @@ export const SalesPromotions: React.FC = () => {
     });
   }, [events, isStaffOnly, isSuper, user, userEmail]);
 
+  // Events Directory Tabs, Search, Filters & Pagination States
+  const [directoryTab, setDirectoryTab] = useState<'present' | 'past'>('present');
+  const [directorySearch, setDirectorySearch] = useState('');
+  const [directoryStatusFilter, setDirectoryStatusFilter] = useState('all');
+  const [directoryPage, setDirectoryPage] = useState(1);
+  const [directoryRowsPerPage, setDirectoryRowsPerPage] = useState(10);
+
+  // Filtered & Paginated Directory Events
+  const filteredDirectoryEvents = useMemo(() => {
+    let list = directoryEvents || [];
+    
+    // Tab filter: Present (active / upcoming) vs Past (ended / completed / closed / refunded)
+    list = list.filter(event => {
+      if (!event) return false;
+      const status = (event.status || 'upcoming').toLowerCase();
+      const isPast = status === 'ended' || status === 'completed' || status === 'closed' || status === 'refunded';
+      if (directoryTab === 'present') {
+        return !isPast;
+      } else {
+        return isPast;
+      }
+    });
+
+    // Status dropdown filter
+    if (directoryStatusFilter !== 'all') {
+      list = list.filter(event => (event?.status || '').toLowerCase() === directoryStatusFilter.toLowerCase());
+    }
+
+    // Search query filter (Event Name, Type, Manager Name, Location)
+    if (directorySearch.trim()) {
+      const q = directorySearch.trim().toLowerCase();
+      list = list.filter(event => {
+        if (!event) return false;
+        const name = (event.name || '').toLowerCase();
+        const type = (event.type || '').toLowerCase();
+        const manager = (event.managerName || '').toLowerCase();
+        const location = (event.stallLocation || '').toLowerCase();
+        return name.includes(q) || type.includes(q) || manager.includes(q) || location.includes(q);
+      });
+    }
+
+    return list;
+  }, [directoryEvents, directoryTab, directoryStatusFilter, directorySearch]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setDirectoryPage(1);
+  }, [directoryTab, directorySearch, directoryStatusFilter, directoryRowsPerPage]);
+
+  const totalDirectoryPages = Math.ceil(filteredDirectoryEvents.length / directoryRowsPerPage) || 1;
+  const paginatedDirectoryEvents = useMemo(() => {
+    const start = (directoryPage - 1) * directoryRowsPerPage;
+    return filteredDirectoryEvents.slice(start, start + directoryRowsPerPage);
+  }, [filteredDirectoryEvents, directoryPage, directoryRowsPerPage]);
+
+  const presentEventsCount = useMemo(() => {
+    return (directoryEvents || []).filter(event => {
+      if (!event) return false;
+      const status = (event.status || 'upcoming').toLowerCase();
+      return status !== 'ended' && status !== 'completed' && status !== 'closed' && status !== 'refunded';
+    }).length;
+  }, [directoryEvents]);
+
+  const pastEventsCount = useMemo(() => {
+    return (directoryEvents || []).filter(event => {
+      if (!event) return false;
+      const status = (event.status || 'upcoming').toLowerCase();
+      return status === 'ended' || status === 'completed' || status === 'closed' || status === 'refunded';
+    }).length;
+  }, [directoryEvents]);
+
   // Active Stall ID for POS & Ledger
   // Admins can toggle between 'all' and any specific stall.
   // Non-admins are locked strictly to their assigned stall.
@@ -511,6 +582,7 @@ export const SalesPromotions: React.FC = () => {
   const [posSalesTag, setPosSalesTag] = useState<string>('Event Standard');
   const [lastReceipt, setLastReceipt] = useState<EventTransaction | null>(null);
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+  const [eventToDelete, setEventToDelete] = useState<SalesEvent | null>(null);
 
   // Export State
   const [isExporting, setIsExporting] = useState(false);
@@ -1188,10 +1260,68 @@ export const SalesPromotions: React.FC = () => {
             </div>
           </div>
 
+          {/* Tabs & Search/Filter Controls */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+            {/* Present / Past Tabs */}
+            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-xl font-bold text-xs">
+              <button
+                onClick={() => setDirectoryTab('present')}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${
+                  directoryTab === 'present'
+                    ? 'bg-white dark:bg-slate-900 text-amber-600 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+                }`}
+              >
+                <span>Present Events</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400">
+                  {presentEventsCount}
+                </span>
+              </button>
+              <button
+                onClick={() => setDirectoryTab('past')}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${
+                  directoryTab === 'past'
+                    ? 'bg-white dark:bg-slate-900 text-amber-600 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+                }`}
+              >
+                <span>Past Events</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {pastEventsCount}
+                </span>
+              </button>
+            </div>
+
+            {/* Search and Status Filter */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative flex-1 sm:w-72">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={directorySearch}
+                  onChange={e => setDirectorySearch(e.target.value)}
+                  placeholder="Search event, type, manager, location..."
+                  className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                />
+              </div>
+
+              <select
+                value={directoryStatusFilter}
+                onChange={e => setDirectoryStatusFilter(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+              >
+                <option value="all">All Statuses</option>
+                <option value="active">Active</option>
+                <option value="upcoming">Upcoming</option>
+                <option value="ended">Ended / Completed</option>
+              </select>
+            </div>
+          </div>
+
           {/* Events Directory Header with View Toggle */}
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase font-mono tracking-wider">
-              Events Directory ({directoryEvents.length})
+              {directoryTab === 'present' ? 'Present Events' : 'Past Events'} ({filteredDirectoryEvents.length})
             </h3>
             <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl gap-1 text-xs font-bold font-mono">
               <button
@@ -1221,8 +1351,8 @@ export const SalesPromotions: React.FC = () => {
 
           {directoryViewMode === 'table' ? (
             <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-x-auto">
-              {(!directoryEvents || directoryEvents.length === 0) ? (
-                <div className="p-12 text-center text-slate-400 text-xs">No events found.</div>
+              {(!filteredDirectoryEvents || filteredDirectoryEvents.length === 0) ? (
+                <div className="p-12 text-center text-slate-400 text-xs">No events found matching your criteria.</div>
               ) : (
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
@@ -1237,7 +1367,7 @@ export const SalesPromotions: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
-                    {directoryEvents.map(event => {
+                    {paginatedDirectoryEvents.map(event => {
                       if (!event) return null;
                       const eventSales = (allocations || []).filter(a => a?.eventId === event?.id);
                       const totalItemsAllocated = eventSales.reduce((sum, a) => sum + (a?.allocatedQty || 0), 0);
@@ -1313,13 +1443,9 @@ export const SalesPromotions: React.FC = () => {
                                 <ChevronRight className="w-3 h-3" />
                               </button>
                               <button
-                                onClick={() => {
-                                  if (confirm(`Move event "${event.name}" to Recycle Bin?`)) {
-                                    deleteEvent(event.id);
-                                  }
-                                }}
-                                className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                                title="Delete"
+                                onClick={() => setEventToDelete(event)}
+                                className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                                title="Move to Recycle Bin"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -1334,14 +1460,14 @@ export const SalesPromotions: React.FC = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {(!directoryEvents || directoryEvents.length === 0) ? (
+              {(!filteredDirectoryEvents || filteredDirectoryEvents.length === 0) ? (
                 <div className="col-span-full p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
                   <div className="w-12 h-12 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center mx-auto">
                     <Sparkles className="w-6 h-6" />
                   </div>
                   <h3 className="font-bold text-base text-slate-900 dark:text-white">No Assigned Sales Events</h3>
                   <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                    {canAdminOverride ? 'No sales events or stalls are currently registered for this branch.' : 'You are not currently assigned as a stall manager to any active sales events.'}
+                    {canAdminOverride ? 'No sales events or stalls are currently registered matching your search criteria.' : 'You are not currently assigned as a stall manager to any active sales events.'}
                   </p>
                   {canAdminOverride && (
                     <button
@@ -1353,7 +1479,7 @@ export const SalesPromotions: React.FC = () => {
                   )}
                 </div>
               ) : (
-                directoryEvents.map(event => {
+                paginatedDirectoryEvents.map(event => {
                   if (!event) return null;
                   const eventSales = (allocations || []).filter(a => a?.eventId === event?.id);
                   const totalItemsAllocated = eventSales.reduce((sum, a) => sum + (a?.allocatedQty || 0), 0);
@@ -1440,11 +1566,7 @@ export const SalesPromotions: React.FC = () => {
 
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => {
-                              if (confirm(`Move event "${event.name}" to Recycle Bin? (You can restore it later)`)) {
-                                deleteEvent(event.id);
-                              }
-                            }}
+                            onClick={() => setEventToDelete(event)}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
                             title="Move to Recycle Bin"
                           >
@@ -1487,6 +1609,46 @@ export const SalesPromotions: React.FC = () => {
                   );
                 })
               )}
+            </div>
+          )}
+
+          {/* Pagination Footer */}
+          {filteredDirectoryEvents.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-500 mt-6">
+              <div className="flex items-center gap-3">
+                <span>
+                  Showing {Math.min(filteredDirectoryEvents.length, (directoryPage - 1) * directoryRowsPerPage + 1)}–{Math.min(directoryPage * directoryRowsPerPage, filteredDirectoryEvents.length)} of {filteredDirectoryEvents.length} events
+                </span>
+                <select
+                  value={directoryRowsPerPage}
+                  onChange={e => setDirectoryRowsPerPage(Number(e.target.value))}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-0 focus:ring-2 focus:ring-amber-500/20 text-xs font-mono"
+                >
+                  <option value={10}>10 rows</option>
+                  <option value={25}>25 rows</option>
+                  <option value={50}>50 rows</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setDirectoryPage(p => Math.max(1, p - 1))}
+                  disabled={directoryPage === 1}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+                >
+                  Previous
+                </button>
+                <span className="px-3 py-1.5 font-bold text-slate-900 dark:text-white">
+                  Page {directoryPage} of {totalDirectoryPages}
+                </span>
+                <button
+                  onClick={() => setDirectoryPage(p => Math.min(totalDirectoryPages, p + 1))}
+                  disabled={directoryPage === totalDirectoryPages}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -3358,6 +3520,81 @@ export const SalesPromotions: React.FC = () => {
             <p className="text-[10px] text-slate-400">
               Please wait while the system compiles the transaction ledgers and reconciles allocated stock.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Event Confirmation Modal */}
+      {eventToDelete && (
+        <div 
+          className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setEventToDelete(null)}
+        >
+          <div 
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">
+                  Move Event to Recycle Bin?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Are you sure you want to delete <span className="font-semibold text-slate-800 dark:text-slate-200">"{eventToDelete.name}"</span>?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800/80 text-xs space-y-1.5 font-mono">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Event Type:</span>
+                <span className="font-bold text-amber-600 uppercase">{(eventToDelete.type || 'Stall').replace('_', ' ')}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Manager:</span>
+                <span className="font-medium text-slate-700 dark:text-slate-300">{eventToDelete.managerName || 'TBD'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Location:</span>
+                <span className="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[200px]">{eventToDelete.stallLocation || 'Main Stall'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Total Sales:</span>
+                <span className="font-bold text-emerald-600">₹{(eventToDelete.currentRevenue || 0).toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-900/50 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                Allocated items and historical orders are preserved safely. You can restore this event anytime from the <span className="font-bold">Recycle Bin</span>.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEventToDelete(null)}
+                className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const targetId = eventToDelete.id;
+                  setEventToDelete(null);
+                  await deleteEvent(targetId);
+                }}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Move to Recycle Bin</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

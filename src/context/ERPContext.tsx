@@ -2157,11 +2157,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteEvent = async (id: string) => {
-    const target = events.find(e => e.id === id);
-    setEvents(prev => prev.filter(evt => evt.id !== id));
+    const target = allEvents.find(e => String(e.id) === String(id)) || events.find(e => String(e.id) === String(id));
+    setAllEvents(prev => prev.filter(evt => String(evt.id) !== String(id)));
+    setEvents(prev => prev.filter(evt => String(evt.id) !== String(id)));
     if (target) {
       try {
-        await fetch(`/api/events?id=${id}&deletedBy=${encodeURIComponent(user.name || 'Store Staff')}`, {
+        await fetch(`/api/events?id=${id}&deletedBy=${encodeURIComponent(user?.name || 'Store Staff')}`, {
           method: 'DELETE'
         });
       } catch (e) {
@@ -2174,7 +2175,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'Moved Event to Recycle Bin',
         'events',
         id,
-        `Moved sales event "${target.name}" to Recycle Bin. Soft-deleted by ${user.name}.`
+        `Moved sales event "${target.name}" to Recycle Bin. Soft-deleted by ${user?.name || 'Store Staff'}.`
       );
       quickNotification('Event Moved to Recycle Bin', `Event "${target.name}" moved to Recycle Bin.`, 'warning');
     }

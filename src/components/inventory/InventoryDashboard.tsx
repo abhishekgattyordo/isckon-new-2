@@ -1135,7 +1135,7 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({ initialT
                           {mov.qtyDelta > 0 ? `+${mov.qtyDelta}` : mov.qtyDelta} UNIT
                         </span>
                         <div className="text-[10px] text-slate-400 font-mono">
-                          {mov.toZone ? `TO ${mov.toZone.split('—')[0]}` : ''} {mov.fromZone ? `FROM ${mov.fromZone.split('—')[0]}` : ''}
+                          {mov.toZone ? `TO ${(mov.toZone || '').split('—')[0]}` : ''} {mov.fromZone ? `FROM ${(mov.fromZone || '').split('—')[0]}` : ''}
                         </div>
                       </div>
                     </div>
@@ -1306,7 +1306,7 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({ initialT
                 >
                   {products.map(p => (
                     <option key={p.id} value={p.sku}>
-                      {p.name} ({p.sku}) — Zone: {p.warehouseZone?.split('—')[0]} ({p.stock} Units)
+                      {p.name} ({p.sku}) — Zone: {(p.warehouseZone || '').split('—')[0]} ({p.stock} Units)
                     </option>
                   ))}
                 </select>
@@ -1333,7 +1333,7 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({ initialT
                       .filter(z => z.name !== transferFromZone)
                       .map(z => (
                         <option key={z.id} value={z.name}>
-                          {z.name.split('—')[0]}
+                          {(z.name || '').split('—')[0]}
                         </option>
                       ))}
                   </select>
@@ -1433,7 +1433,7 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({ initialT
                 >
                   {products.map(p => (
                     <option key={p.id} value={p.sku}>
-                      {p.name} ({p.sku}) — Zone: {p.warehouseZone?.split('—')[0]} ({p.stock} Units)
+                      {p.name} ({p.sku}) — Zone: {(p.warehouseZone || '').split('—')[0]} ({p.stock} Units)
                     </option>
                   ))}
                 </select>
@@ -1449,7 +1449,7 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({ initialT
                   >
                     {zones.map(z => (
                       <option key={z.id} value={z.name}>
-                        {z.name.split('—')[0]}
+                        {(z.name || '').split('—')[0]}
                       </option>
                     ))}
                   </select>
