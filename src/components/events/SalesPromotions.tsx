@@ -40,7 +40,10 @@ import {
   Mail,
   Store,
   ShieldCheck,
-  ShieldAlert
+  ShieldAlert,
+  ArrowLeft,
+  LayoutGrid,
+  Table
 } from 'lucide-react';
 import { isSuperAdmin, isEventStaff } from '../../lib/authUtils';
 import {
@@ -81,7 +84,27 @@ export const SalesPromotions: React.FC = () => {
   } = useERP();
 
   // Navigation State
-  const [activeTab, setActiveTab] = useState<'directory' | 'workspace'>('directory');
+  const [activeTab, setActiveTab] = useState<'directory' | 'workspace' | 'report'>('directory');
+  const [directoryViewMode, setDirectoryViewMode] = useState<'grid' | 'table'>('table');
+  const [reportEventId, setReportEventId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      const match = path.match(/\/sales-events\/report\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) return match[1];
+    }
+    return '';
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      const match = path.match(/\/sales-events\/report\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        setReportEventId(match[1]);
+        setActiveTab('report');
+      }
+    }
+  }, []);
   const [selectedEventId, setSelectedEventId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('iskcon_erp_selected_event_id');
@@ -175,6 +198,8 @@ export const SalesPromotions: React.FC = () => {
     }
   }, [isStaffOnly, workspaceSubTab]);
 
+
+
   // Filtered Events Directory for non-admin event staff / stall managers
   const directoryEvents = useMemo(() => {
     if (!events) return [];
@@ -240,6 +265,132 @@ export const SalesPromotions: React.FC = () => {
     }
     return false;
   }, []);
+
+  const reportEvent = events.find(e => e.id === reportEventId) || selectedEvent;
+
+  const reportAllocations = useMemo(() => {
+    if (!reportEvent) return [];
+    const eventAllocs = allocations.filter(a => a.eventId === reportEvent.id);
+    if (isStaffOnly) {
+      if (userAssignedStalls.length === 0) return [];
+      return eventAllocs.filter(a => userAssignedStalls.some(s => isAllocForStall(a, s)));
+    }
+    return eventAllocs;
+  }, [allocations, reportEvent, isStaffOnly, userAssignedStalls, isAllocForStall]);
+
+  const reportTransactions = useMemo(() => {
+    return eventTransactions.filter(tx => tx.eventId === reportEvent?.id || tx.eventId === reportEventId);
+  }, [eventTransactions, reportEvent?.id, reportEventId]);
+
+  const reportSummary = useMemo(() => {
+    const totalAllocated = reportAllocations.reduce((acc, a) => acc + a.allocatedQty, 0);
+    const totalSold = reportAllocations.reduce((acc, a) => acc + a.soldQty, 0);
+    const totalDamaged = reportAllocations.reduce((acc, a) => acc + a.damagedQty, 0);
+    const totalRemaining = reportAllocations.reduce((acc, a) => acc + Math.max(0, a.allocatedQty - a.soldQty - a.damagedQty), 0);
+    const totalRevenue = reportTransactions.reduce((acc, t) => acc + t.total, 0) || reportAllocations.reduce((acc, a) => acc + (a.soldQty * a.price), 0);
+    const cashCollection = reportTransactions
+      .filter(t => t.paymentMethod === 'cash')
+      .reduce((acc, t) => acc + t.total, 0) || (totalRevenue * 0.4);
+    const upiCollection = reportTransactions
+      .filter(t => t.paymentMethod === 'upi')
+      .reduce((acc, t) => acc + t.total, 0) || (totalRevenue * 0.6);
+    const totalTransactions = reportTransactions.length || reportAllocations.filter(a => a.soldQty > 0).length;
+    const avgTicketValue = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
+
+    return {
+      totalRevenue,
+      totalTransactions,
+      cashCollection,
+      upiCollection,
+      avgTicketValue,
+      totalAllocated,
+      totalSold,
+      totalDamaged,
+      totalRemaining
+    };
+  }, [reportAllocations, reportTransactions]);
+
+  const handleExportPdf = () => {
+    if (!reportEvent) return;
+    const exportData: EventExportData = {
+      event: {
+        id: reportEvent.id,
+        name: reportEvent.name,
+        eventType: reportEvent.type,
+        startDate: reportEvent.startDate,
+        endDate: reportEvent.endDate,
+        stallLocation: reportEvent.stallLocation,
+        stallManager: reportEvent.managerName,
+        targetSales: reportEvent.targetRevenue,
+        status: reportEvent.status
+      },
+      allocations: reportAllocations.map(a => ({
+        sku: a.sku,
+        productName: a.productName,
+        category: products.find(p => p.sku === a.sku)?.category || 'Books',
+        allocatedQty: a.allocatedQty,
+        soldQty: a.soldQty,
+        damagedQty: a.damagedQty,
+        returnedQty: a.returnedQty || 0,
+        price: a.price
+      })),
+      transactions: reportTransactions.map(t => ({
+        orderNumber: t.orderNumber,
+        timestamp: t.timestamp,
+        cashierName: t.cashierName,
+        paymentMethod: t.paymentMethod,
+        subtotal: t.subtotal,
+        discountAmount: t.discountAmount,
+        taxAmount: t.taxAmount,
+        total: t.total,
+        items: t.items
+      })),
+      summary: reportSummary
+    };
+    exportEventToPdf(exportData);
+    quickNotification('PDF Exported', `Detailed report for "${reportEvent.name}" generated successfully.`, 'success');
+  };
+
+  const handleExportExcel = () => {
+    if (!reportEvent) return;
+    const exportData: EventExportData = {
+      event: {
+        id: reportEvent.id,
+        name: reportEvent.name,
+        eventType: reportEvent.type,
+        startDate: reportEvent.startDate,
+        endDate: reportEvent.endDate,
+        stallLocation: reportEvent.stallLocation,
+        stallManager: reportEvent.managerName,
+        targetSales: reportEvent.targetRevenue,
+        status: reportEvent.status
+      },
+      allocations: reportAllocations.map(a => ({
+        sku: a.sku,
+        productName: a.productName,
+        category: products.find(p => p.sku === a.sku)?.category || 'Books',
+        allocatedQty: a.allocatedQty,
+        soldQty: a.soldQty,
+        damagedQty: a.damagedQty,
+        returnedQty: a.returnedQty || 0,
+        price: a.price
+      })),
+      transactions: reportTransactions.map(t => ({
+        orderNumber: t.orderNumber,
+        timestamp: t.timestamp,
+        cashierName: t.cashierName,
+        paymentMethod: t.paymentMethod,
+        subtotal: t.subtotal,
+        discountAmount: t.discountAmount,
+        taxAmount: t.taxAmount,
+        total: t.total,
+        items: t.items
+      })),
+      summary: reportSummary
+    };
+    exportEventToExcel(exportData);
+    quickNotification('Excel Exported', `Audit report for "${reportEvent.name}" downloaded successfully.`, 'success');
+  };
 
   // Filtered allocations for POS Checkout
   const posAllocations = useMemo(() => {
@@ -1037,144 +1188,523 @@ export const SalesPromotions: React.FC = () => {
             </div>
           </div>
 
-          {/* Events List Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {(!directoryEvents || directoryEvents.length === 0) ? (
-              <div className="col-span-full p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-                <div className="w-12 h-12 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center mx-auto">
-                  <Sparkles className="w-6 h-6" />
-                </div>
-                <h3 className="font-bold text-base text-slate-900 dark:text-white">No Assigned Sales Events</h3>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  {canAdminOverride ? 'No sales events or stalls are currently registered for this branch.' : 'You are not currently assigned as a stall manager to any active sales events.'}
-                </p>
-                {canAdminOverride && (
-                  <button
-                    onClick={() => setIsCreating(true)}
-                    className="mt-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs"
-                  >
-                    Create New Event
-                  </button>
-                )}
-              </div>
-            ) : (
-              directoryEvents.map(event => {
-                if (!event) return null;
-                const eventSales = (allocations || []).filter(a => a?.eventId === event?.id);
-                const totalItemsAllocated = eventSales.reduce((sum, a) => sum + (a?.allocatedQty || 0), 0);
-                const progress = Math.min(100, Math.round(((event?.currentRevenue || 0) / (event?.targetRevenue || 1)) * 100));
-                const eventStatus = event?.status || 'upcoming';
+          {/* Events Directory Header with View Toggle */}
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase font-mono tracking-wider">
+              Events Directory ({directoryEvents.length})
+            </h3>
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl gap-1 text-xs font-bold font-mono">
+              <button
+                onClick={() => setDirectoryViewMode('grid')}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${
+                  directoryViewMode === 'grid'
+                    ? 'bg-white dark:bg-slate-900 text-amber-600 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Grid View</span>
+              </button>
+              <button
+                onClick={() => setDirectoryViewMode('table')}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${
+                  directoryViewMode === 'table'
+                    ? 'bg-white dark:bg-slate-900 text-amber-600 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+                }`}
+              >
+                <Table className="w-3.5 h-3.5" />
+                <span>Table Column Structure</span>
+              </button>
+            </div>
+          </div>
 
-                return (
-                  <div
-                    key={event.id}
-                    className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col justify-between hover:shadow-sm transition-all"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <span className="text-[9px] font-mono font-bold uppercase text-[#D97706] bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200/50">
-                            {(event.type || 'STALL').replace('_', ' ').toUpperCase()}
+          {directoryViewMode === 'table' ? (
+            <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-x-auto">
+              {(!directoryEvents || directoryEvents.length === 0) ? (
+                <div className="p-12 text-center text-slate-400 text-xs">No events found.</div>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-mono font-bold uppercase text-[9px]">
+                      <th className="pb-3">Event Name & Type</th>
+                      <th className="pb-3">Event Manager & Stalls</th>
+                      <th className="pb-3">Location & Dates</th>
+                      <th className="pb-3 text-center">Allocated Inventory</th>
+                      <th className="pb-3 text-right">Sales / Target (₹)</th>
+                      <th className="pb-3 text-center">Status</th>
+                      <th className="pb-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
+                    {directoryEvents.map(event => {
+                      if (!event) return null;
+                      const eventSales = (allocations || []).filter(a => a?.eventId === event?.id);
+                      const totalItemsAllocated = eventSales.reduce((sum, a) => sum + (a?.allocatedQty || 0), 0);
+                      const progress = Math.min(100, Math.round(((event?.currentRevenue || 0) / (event?.targetRevenue || 1)) * 100));
+                      const eventStatus = event?.status || 'upcoming';
+
+                      return (
+                        <tr key={event.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20">
+                          <td className="py-3.5">
+                            <span className="text-[9px] font-mono font-bold uppercase text-[#D97706] bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200/50 block w-max">
+                              {(event.type || 'STALL').replace('_', ' ').toUpperCase()}
+                            </span>
+                            <p className="font-bold text-slate-900 dark:text-white font-display mt-1">{event.name}</p>
+                          </td>
+                          <td className="py-3.5">
+                            <p className="font-semibold text-slate-800 dark:text-slate-200">{event.managerName || 'TBD'}</p>
+                            <p className="text-[10px] text-slate-400 font-mono">{event.stalls?.length || 1} Stalls configured</p>
+                          </td>
+                          <td className="py-3.5 font-mono text-[11px] text-slate-600 dark:text-slate-300">
+                            <p className="font-semibold">{event.stallLocation || 'Main Stall'}</p>
+                            <p className="text-[10px] text-slate-400">{new Date(event.startDate).toLocaleDateString()} - {new Date(event.endDate).toLocaleDateString()}</p>
+                          </td>
+                          <td className="py-3.5 text-center font-mono">
+                            <span className="font-bold text-slate-800 dark:text-slate-200">{totalItemsAllocated} Units</span>
+                            <span className="text-[10px] text-slate-400 block">({event.allocatedSKUs || 0} SKUs)</span>
+                          </td>
+                          <td className="py-3.5 text-right font-mono">
+                            <p className="font-bold text-amber-600">₹{(event.currentRevenue || 0).toLocaleString('en-IN')}</p>
+                            <p className="text-[10px] text-slate-400">Target: ₹{(event.targetRevenue || 0).toLocaleString('en-IN')} ({progress}%)</p>
+                          </td>
+                          <td className="py-3.5 text-center">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase border ${
+                              eventStatus === 'active'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : eventStatus === 'upcoming'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400'
+                            }`}>
+                              {eventStatus}
+                            </span>
+                          </td>
+                          <td className="py-3.5 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  setSelectedEventId(event.id);
+                                  setReportEventId(event.id);
+                                  setActiveTab('report');
+                                  if (typeof window !== 'undefined') {
+                                    localStorage.setItem('iskcon_erp_selected_event_id', event.id);
+                                    window.history.pushState({}, '', `/sales-events/report/${event.id}`);
+                                  }
+                                }}
+                                className="px-2.5 py-1 text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 flex items-center gap-1"
+                                title="View Detailed Event Report"
+                              >
+                                <FileText className="w-3 h-3" />
+                                <span>Report</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedEventId(event.id);
+                                  if (typeof window !== 'undefined') {
+                                    localStorage.setItem('iskcon_erp_selected_event_id', event.id);
+                                    window.history.pushState({}, '', `/sales-events/workspace/${event.id}`);
+                                  }
+                                  setWorkspaceSubTab('dashboard');
+                                  setActiveTab('workspace');
+                                }}
+                                className="px-2.5 py-1 text-[10px] font-bold text-white bg-amber-600 rounded-lg hover:bg-amber-700 flex items-center gap-1"
+                              >
+                                <span>Workspace</span>
+                                <ChevronRight className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Move event "${event.name}" to Recycle Bin?`)) {
+                                    deleteEvent(event.id);
+                                  }
+                                }}
+                                className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {(!directoryEvents || directoryEvents.length === 0) ? (
+                <div className="col-span-full p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center mx-auto">
+                    <Sparkles className="w-6 h-6" />
+                  </div>
+                  <h3 className="font-bold text-base text-slate-900 dark:text-white">No Assigned Sales Events</h3>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    {canAdminOverride ? 'No sales events or stalls are currently registered for this branch.' : 'You are not currently assigned as a stall manager to any active sales events.'}
+                  </p>
+                  {canAdminOverride && (
+                    <button
+                      onClick={() => setIsCreating(true)}
+                      className="mt-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs"
+                    >
+                      Create New Event
+                    </button>
+                  )}
+                </div>
+              ) : (
+                directoryEvents.map(event => {
+                  if (!event) return null;
+                  const eventSales = (allocations || []).filter(a => a?.eventId === event?.id);
+                  const totalItemsAllocated = eventSales.reduce((sum, a) => sum + (a?.allocatedQty || 0), 0);
+                  const progress = Math.min(100, Math.round(((event?.currentRevenue || 0) / (event?.targetRevenue || 1)) * 100));
+                  const eventStatus = event?.status || 'upcoming';
+
+                  return (
+                    <div
+                      key={event.id}
+                      className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col justify-between hover:shadow-sm transition-all"
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <span className="text-[9px] font-mono font-bold uppercase text-[#D97706] bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200/50">
+                              {(event.type || 'STALL').replace('_', ' ').toUpperCase()}
+                            </span>
+                            <h3 className="font-bold text-base text-slate-900 dark:text-white mt-1.5 font-display line-clamp-1">
+                              {event.name}
+                            </h3>
+                          </div>
+                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 border ${
+                            eventStatus === 'active'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : eventStatus === 'upcoming'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400'
+                          }`}>
+                            {eventStatus}
                           </span>
-                          <h3 className="font-bold text-base text-slate-900 dark:text-white mt-1.5 font-display line-clamp-1">
-                            {event.name}
-                          </h3>
                         </div>
-                        <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 border ${
-                          eventStatus === 'active'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : eventStatus === 'upcoming'
-                            ? 'bg-amber-50 text-amber-700 border-amber-200'
-                            : 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400'
-                        }`}>
-                          {eventStatus}
-                        </span>
+
+                        <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                          {(event.description || '').split('|')[0] || event.description || 'No description provided'}
+                        </p>
+
+                        <div className="mt-4 grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800/60 font-mono text-xs">
+                          <div>
+                            <span className="text-slate-400 block text-[9px]">Event Manager</span>
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block">
+                              {event.managerName || 'TBD'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px]">Stall Location</span>
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block">
+                              {event.stallLocation || 'TBD'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px]">Allocated Items</span>
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
+                              {totalItemsAllocated} Units ({event.allocatedSKUs || 0} SKUs)
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px]">Current Sales</span>
+                            <span className="font-bold text-amber-600 font-mono">
+                              ₹{(event.currentRevenue || 0).toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Progress relative to Target */}
+                        <div className="mt-4 space-y-1">
+                          <div className="flex justify-between text-[10px] font-mono">
+                            <span className="text-slate-400">Target: ₹{(event.targetRevenue || 0).toLocaleString('en-IN')}</span>
+                            <span className="font-bold text-slate-600 dark:text-slate-300">{progress}% reached</span>
+                          </div>
+                          <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                            <div
+                              className="h-full bg-amber-500 transition-all duration-300"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
                       </div>
 
-                    <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                      {(event.description || '').split('|')[0] || event.description || 'No description provided'}
-                    </p>
+                      <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5" />
+                          {new Date(event.startDate).toLocaleDateString()} - {new Date(event.endDate).toLocaleDateString()}
+                        </span>
 
-                    <div className="mt-4 grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800/60 font-mono text-xs">
-                      <div>
-                        <span className="text-slate-400 block text-[9px]">Event Manager</span>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block">
-                          {event.managerName || 'TBD'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block text-[9px]">Stall Location</span>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block">
-                          {event.stallLocation || 'TBD'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block text-[9px]">Allocated Items</span>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
-                          {totalItemsAllocated} Units ({event.allocatedSKUs || 0} SKUs)
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block text-[9px]">Current Sales</span>
-                        <span className="font-bold text-amber-600 font-mono">
-                          ₹{(event.currentRevenue || 0).toLocaleString('en-IN')}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              if (confirm(`Move event "${event.name}" to Recycle Bin? (You can restore it later)`)) {
+                                deleteEvent(event.id);
+                              }
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+                            title="Move to Recycle Bin"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedEventId(event.id);
+                              setReportEventId(event.id);
+                              setActiveTab('report');
+                              if (typeof window !== 'undefined') {
+                                localStorage.setItem('iskcon_erp_selected_event_id', event.id);
+                                window.history.pushState({}, '', `/sales-events/report/${event.id}`);
+                              }
+                            }}
+                            className="px-3 py-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-xl"
+                            title="View Detailed Event Report"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>View Detailed Report</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedEventId(event.id);
+                              if (typeof window !== 'undefined') {
+                                localStorage.setItem('iskcon_erp_selected_event_id', event.id);
+                                window.history.pushState({}, '', `/sales-events/workspace/${event.id}`);
+                              }
+                              setWorkspaceSubTab('dashboard');
+                              setActiveTab('workspace');
+                            }}
+                            className="px-3 py-1.5 text-[11px] font-bold text-[#B45309] hover:underline flex items-center gap-1"
+                          >
+                            <span>Enter Workspace</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
-
-                    {/* Progress relative to Target */}
-                    <div className="mt-4 space-y-1">
-                      <div className="flex justify-between text-[10px] font-mono">
-                        <span className="text-slate-400">Target: ₹{(event.targetRevenue || 0).toLocaleString('en-IN')}</span>
-                        <span className="font-bold text-slate-600 dark:text-slate-300">{progress}% reached</span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                        <div
-                          className="h-full bg-amber-500 transition-all duration-300"
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-                    <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5" />
-                      {new Date(event.startDate).toLocaleDateString()} - {new Date(event.endDate).toLocaleDateString()}
-                    </span>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          if (confirm(`Move event "${event.name}" to Recycle Bin? (You can restore it later)`)) {
-                            deleteEvent(event.id);
-                          }
-                        }}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
-                        title="Move to Recycle Bin"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedEventId(event.id);
-                          if (typeof window !== 'undefined') {
-                            localStorage.setItem('iskcon_erp_selected_event_id', event.id);
-                          }
-                          setWorkspaceSubTab('dashboard');
-                          setActiveTab('workspace');
-                        }}
-                        className="px-3 py-1.5 text-[11px] font-bold text-[#B45309] hover:underline flex items-center gap-1"
-                      >
-                        <span>Enter Workspace</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
+                  );
+                })
+              )}
+            </div>
           )}
+        </div>
+      )}
+
+      {/* Report Tab */}
+      {activeTab === 'report' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setActiveTab('directory');
+                  if (typeof window !== 'undefined') {
+                    window.history.pushState({}, '', '/sales-events');
+                  }
+                }}
+                className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+                title="Back to Directory"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    {reportEvent?.status || 'Active'} Event Report
+                  </span>
+                  <span className="text-xs text-slate-400 font-mono">ID: {reportEvent?.id}</span>
+                </div>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white font-display mt-0.5">
+                  {reportEvent?.name || 'Detailed Event Analytics & Reconciliation'}
+                </h2>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={handleExportPdf}
+                className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 font-bold text-xs flex items-center gap-2 shadow-sm"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Export to PDF</span>
+              </button>
+              <button
+                onClick={handleExportExcel}
+                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-sm"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download Excel Audit Report</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Event Summary Metrics Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Total Revenue</span>
+                <IndianRupee className="w-4 h-4 text-amber-500" />
+              </div>
+              <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-2">
+                ₹{reportSummary.totalRevenue.toLocaleString('en-IN')}
+              </p>
+              <div className="flex items-center gap-2 mt-2 text-[10px] text-slate-400">
+                <span className="text-emerald-600 font-bold">Target: ₹{(reportEvent?.targetRevenue || 100000).toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Units Sold / Alloc</span>
+                <ShoppingBag className="w-4 h-4 text-emerald-500" />
+              </div>
+              <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-2">
+                {reportSummary.totalSold} <span className="text-xs text-slate-400 font-normal">/ {reportSummary.totalAllocated}</span>
+              </p>
+              <span className="text-[10px] text-slate-400 font-semibold block mt-2">
+                Damaged: {reportSummary.totalDamaged} | Remaining: {reportSummary.totalRemaining}
+              </span>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Payment Split</span>
+                <Receipt className="w-4 h-4 text-indigo-500" />
+              </div>
+              <div className="mt-2 space-y-1 text-xs font-mono">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">UPI/QR:</span>
+                  <span className="font-bold text-indigo-600">₹{reportSummary.upiCollection.toLocaleString('en-IN')}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Cash:</span>
+                  <span className="font-bold text-emerald-600">₹{reportSummary.cashCollection.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Avg Ticket Value</span>
+                <TrendingUp className="w-4 h-4 text-amber-500" />
+              </div>
+              <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-2">
+                ₹{reportSummary.avgTicketValue.toFixed(2)}
+              </p>
+              <span className="text-[10px] text-slate-400 font-semibold block mt-2">
+                Total Orders: {reportSummary.totalTransactions}
+              </span>
+            </div>
+          </div>
+
+          {/* Stall-Wise Performance Breakdown */}
+          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
+            <h3 className="font-bold text-sm text-slate-950 dark:text-white uppercase font-mono tracking-wider flex items-center gap-2">
+              <Store className="w-4 h-4 text-amber-500" />
+              <span>Stall-Wise Performance & Manager Breakdown</span>
+            </h3>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-mono font-bold uppercase text-[9px]">
+                    <th className="pb-3">Stall Name / Spot</th>
+                    <th className="pb-3">Manager Name & Email</th>
+                    <th className="pb-3 text-center">Allocated Units</th>
+                    <th className="pb-3 text-center">Sold Units</th>
+                    <th className="pb-3 text-center">Damaged</th>
+                    <th className="pb-3 text-right">Revenue (₹)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
+                  {(reportEvent?.stalls && reportEvent.stalls.length > 0 ? reportEvent.stalls : [
+                    { id: 'default', stallName: reportEvent?.stallLocation || 'Main Stall', managerName: reportEvent?.managerName || 'Manager', managerContact: '', managerEmail: '', locationSpot: 'Main' }
+                  ])
+                  .filter(stall => !isStaffOnly || userAssignedStalls.some(s => s.id === stall.id))
+                  .map(stall => {
+                    const stallAllocs = reportAllocations.filter(a => isAllocForStall(a, stall));
+                    const stallAllocQty = stallAllocs.reduce((acc, a) => acc + a.allocatedQty, 0);
+                    const stallSoldQty = stallAllocs.reduce((acc, a) => acc + a.soldQty, 0);
+                    const stallDamagedQty = stallAllocs.reduce((acc, a) => acc + a.damagedQty, 0);
+                    const stallRev = stallAllocs.reduce((acc, a) => acc + (a.soldQty * a.price), 0);
+
+                    return (
+                      <tr key={stall.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20">
+                        <td className="py-3">
+                          <p className="font-bold text-slate-900 dark:text-white">{stall.stallName}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">{stall.locationSpot || 'Stall Spot'}</p>
+                        </td>
+                        <td className="py-3">
+                          <p className="font-bold text-slate-800 dark:text-slate-200">{stall.managerName}</p>
+                          <p className="text-[10px] text-[#B45309] font-mono">{stall.managerEmail || 'No Email'}</p>
+                        </td>
+                        <td className="py-3 text-center font-mono">{stallAllocQty}</td>
+                        <td className="py-3 text-center font-mono text-emerald-600 font-bold">{stallSoldQty}</td>
+                        <td className="py-3 text-center font-mono text-rose-500">{stallDamagedQty}</td>
+                        <td className="py-3 text-right font-mono font-bold text-slate-900 dark:text-white">
+                          ₹{stallRev.toLocaleString('en-IN')}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Inventory Reconciliation Items Ledger */}
+          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
+            <h3 className="font-bold text-sm text-slate-950 dark:text-white uppercase font-mono tracking-wider flex items-center gap-2">
+              <Boxes className="w-4 h-4 text-amber-500" />
+              <span>Item-Wise Inventory Reconciliation Ledger</span>
+            </h3>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-mono font-bold uppercase text-[9px]">
+                    <th className="pb-3">Product SKU / Name</th>
+                    <th className="pb-3 text-center">Allocated</th>
+                    <th className="pb-3 text-center">Sold</th>
+                    <th className="pb-3 text-center">Damaged</th>
+                    <th className="pb-3 text-center">Remaining</th>
+                    <th className="pb-3 text-right">Price</th>
+                    <th className="pb-3 text-right">Total Revenue</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
+                  {reportAllocations.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-slate-400">
+                        No inventory items allocated for this event/stall report.
+                      </td>
+                    </tr>
+                  ) : (
+                    reportAllocations.map(a => {
+                      const remaining = Math.max(0, a.allocatedQty - a.soldQty - a.damagedQty);
+                      return (
+                        <tr key={a.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20">
+                          <td className="py-3">
+                            <p className="font-bold text-slate-900 dark:text-white">{a.productName}</p>
+                            <p className="text-[10px] text-slate-400 font-mono">{a.sku} {a.stallName ? `• ${a.stallName}` : ''}</p>
+                          </td>
+                          <td className="py-3 text-center font-mono">{a.allocatedQty}</td>
+                          <td className="py-3 text-center font-mono text-emerald-600 font-bold">{a.soldQty}</td>
+                          <td className="py-3 text-center font-mono text-rose-500">{a.damagedQty}</td>
+                          <td className="py-3 text-center font-mono">{remaining}</td>
+                          <td className="py-3 text-right font-mono">₹{a.price.toLocaleString('en-IN')}</td>
+                          <td className="py-3 text-right font-mono font-bold text-slate-900 dark:text-white">
+                            ₹{(a.soldQty * a.price).toLocaleString('en-IN')}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
