@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useERP } from '../../context/ERPContext';
+import { canAccessModule } from '../../lib/authUtils';
 import {
   Search,
   X,
@@ -17,7 +18,7 @@ import {
 } from 'lucide-react';
 
 export const GlobalSearchModal: React.FC = () => {
-  const { isSearchModalOpen, setIsSearchModalOpen, products, orders, setActiveModule } = useERP();
+  const { isSearchModalOpen, setIsSearchModalOpen, products, orders, setActiveModule, user } = useERP();
   const [query, setQuery] = useState('');
 
   useEffect(() => {
@@ -75,7 +76,7 @@ export const GlobalSearchModal: React.FC = () => {
     { id: 'events', name: 'Sales Promotions & Events', desc: 'Manage clearance sales, flash events and discounts', icon: Megaphone, bg: 'bg-rose-500/10 text-rose-500' },
     { id: 'reports', name: 'BI Executive Analytics', desc: 'Interactive charts, tax reports and export options', icon: BarChart3, bg: 'bg-teal-500/10 text-teal-500' },
     { id: 'recycle_bin', name: 'Recycle Bin & Trash', desc: 'Restore or permanently delete archived products, users, GRNs and events', icon: Trash2, bg: 'bg-rose-500/10 text-rose-500' }
-  ].filter(m => m.name.toLowerCase().includes(cleanQuery.toLowerCase()) || m.desc.toLowerCase().includes(cleanQuery.toLowerCase()));
+  ].filter(m => canAccessModule(user, m.id as any) && (m.name.toLowerCase().includes(cleanQuery.toLowerCase()) || m.desc.toLowerCase().includes(cleanQuery.toLowerCase())));
 
   const handleSelectModule = (modId: any) => {
     setActiveModule(modId);
@@ -168,7 +169,7 @@ export const GlobalSearchModal: React.FC = () => {
                         <div className="text-[11px] text-slate-500 flex items-center gap-2">
                           <span className="font-mono text-indigo-500">{prod.sku}</span>
                           <span>•</span>
-                          <span>{prod.warehouseZone.split('—')[0]}</span>
+                          <span>{(prod.warehouseZone || '').split('—')[0] || prod.warehouseZone || 'Main Floor'}</span>
                         </div>
                       </div>
                     </div>

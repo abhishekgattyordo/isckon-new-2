@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useERP } from '../../context/ERPContext';
 import { Product, SalesEvent, StockMovement, EventAllocation, EventTransaction } from '../../types';
 import {
@@ -37,8 +37,12 @@ import {
   Building,
   RefreshCw,
   Tags,
-  Mail
+  Mail,
+  Store,
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-react';
+import { isSuperAdmin } from '../../lib/authUtils';
 import {
   exportEventToExcel,
   exportEventToPdf,
@@ -136,13 +140,159 @@ export const SalesPromotions: React.FC = () => {
     }
   }, [events, selectedEventId]);
 
+  // Session Stall Mapping & Security Access Control
+  const userRole = user?.role || 'Store Executive';
+  const userEmail = (user?.email || '').trim().toLowerCase();
+  const isSuper = isSuperAdmin(user);
+  const isEventOwner = Boolean(
+    selectedEvent && (
+      (selectedEvent.managerName && user?.name && selectedEvent.managerName.toLowerCase().includes(user.name.toLowerCase())) ||
+      (selectedEvent.description && selectedEvent.description.toLowerCase().includes(userEmail))
+    )
+  );
+  const canAdminOverride = isSuper || isEventOwner;
+
+  // Stalls configured under the active event
+  const stallsInEvent = useMemo(() => {
+    return selectedEvent?.stalls && selectedEvent.stalls.length > 0
+      ? selectedEvent.stalls
+      : [];
+  }, [selectedEvent?.stalls]);
+
+  // Stalls assigned to the logged-in user's email
+  const userAssignedStalls = useMemo(() => {
+    if (!userEmail) return [];
+    return stallsInEvent.filter(
+      s => s.managerEmail && s.managerEmail.trim().toLowerCase() === userEmail
+    );
+  }, [stallsInEvent, userEmail]);
+
+  // Active Stall ID for POS & Ledger
+  // Admins can toggle between 'all' and any specific stall.
+  // Non-admins are locked strictly to their assigned stall.
+  const [activeStallId, setActiveStallId] = useState<string>('all');
+  const [ledgerStallFilter, setLedgerStallFilter] = useState<string>('all');
+
+  useEffect(() => {
+    if (!canAdminOverride) {
+      if (userAssignedStalls.length > 0) {
+        setActiveStallId(userAssignedStalls[0].id);
+        setLedgerStallFilter(userAssignedStalls[0].id);
+      } else {
+        setActiveStallId('none');
+        setLedgerStallFilter('none');
+      }
+    } else {
+      setActiveStallId(prev => (prev === 'all' || stallsInEvent.some(s => s.id === prev)) ? prev : 'all');
+      setLedgerStallFilter(prev => (prev === 'all' || stallsInEvent.some(s => s.id === prev)) ? prev : 'all');
+    }
+  }, [selectedEventId, userEmail, canAdminOverride, userAssignedStalls, stallsInEvent]);
+
+  // Selected Stall object
+  const currentStall = useMemo(() => {
+    if (activeStallId === 'all' || activeStallId === 'none') return null;
+    return stallsInEvent.find(s => s.id === activeStallId) || null;
+  }, [stallsInEvent, activeStallId]);
+
+  // Robust stall-to-allocation matching helper
+  const isAllocForStall = useCallback((
+    alloc: EventAllocation,
+    stall: { id?: string; stallName?: string; managerEmail?: string }
+  ): boolean => {
+    if (!stall) return false;
+    if (alloc.stallId && stall.id && alloc.stallId === stall.id) return true;
+    if (
+      alloc.managerEmail &&
+      stall.managerEmail &&
+      alloc.managerEmail.trim().toLowerCase() === stall.managerEmail.trim().toLowerCase()
+    ) {
+      return true;
+    }
+    if (
+      alloc.stallName &&
+      stall.stallName &&
+      alloc.stallName.trim().toLowerCase() === stall.stallName.trim().toLowerCase()
+    ) {
+      return true;
+    }
+    return false;
+  }, []);
+
+  // Filtered allocations for POS Checkout
+  const posAllocations = useMemo(() => {
+    const eventAllocs = allocations.filter(
+      a => a.eventId === selectedEventId || a.eventId === selectedEvent?.id
+    );
+
+    if (!canAdminOverride) {
+      // Non-admin: strictly limited to items in their assigned stalls
+      if (userAssignedStalls.length === 0) return [];
+      const targetStall = currentStall || userAssignedStalls[0];
+      return eventAllocs.filter(a => isAllocForStall(a, targetStall));
+    }
+
+    // Admin view
+    if (activeStallId === 'all') {
+      return eventAllocs;
+    }
+    if (currentStall) {
+      return eventAllocs.filter(a => isAllocForStall(a, currentStall));
+    }
+    return eventAllocs;
+  }, [
+    allocations,
+    selectedEventId,
+    selectedEvent?.id,
+    canAdminOverride,
+    userAssignedStalls,
+    currentStall,
+    activeStallId,
+    isAllocForStall
+  ]);
+
+  // Filtered allocations for the Allocated Items Ledger
+  const visibleAllocations = useMemo(() => {
+    const eventAllocs = allocations.filter(
+      a => a.eventId === selectedEventId || a.eventId === selectedEvent?.id
+    );
+
+    if (!canAdminOverride) {
+      if (userAssignedStalls.length === 0) return [];
+      const targetStall = stallsInEvent.find(s => s.id === ledgerStallFilter) || userAssignedStalls[0];
+      return eventAllocs.filter(a => isAllocForStall(a, targetStall));
+    }
+
+    if (ledgerStallFilter === 'all') {
+      return eventAllocs;
+    }
+    const filteredStall = stallsInEvent.find(s => s.id === ledgerStallFilter);
+    if (filteredStall) {
+      return eventAllocs.filter(a => isAllocForStall(a, filteredStall));
+    }
+    return eventAllocs;
+  }, [
+    allocations,
+    selectedEventId,
+    selectedEvent?.id,
+    canAdminOverride,
+    userAssignedStalls,
+    ledgerStallFilter,
+    stallsInEvent,
+    isAllocForStall
+  ]);
+
   // Fetch live allocations and transactions for the active event from PostgreSQL
   const fetchLiveEventData = useCallback(async (eventId: string) => {
     if (!eventId) return;
     try {
       setIsLoadingEventData(true);
+      const q = new URLSearchParams({
+        eventId,
+        userEmail: user?.email || '',
+        userRole: user?.role || ''
+      });
       const [allocRes, txRes] = await Promise.all([
-        fetch(`/api/events/allocations?eventId=${encodeURIComponent(eventId)}`).then(r => r.json()).catch(() => ({ success: false })),
+        fetch(`/api/events/allocations?${q.toString()}`).then(r => r.json()).catch(() => ({ success: false })),
         fetch(`/api/events/transactions?eventId=${encodeURIComponent(eventId)}`).then(r => r.json()).catch(() => ({ success: false }))
       ]);
 
@@ -164,7 +314,7 @@ export const SalesPromotions: React.FC = () => {
     } finally {
       setIsLoadingEventData(false);
     }
-  }, []);
+  }, [user?.email, user?.role, setAllocations]);
 
   useEffect(() => {
     const targetId = selectedEvent?.id || selectedEventId;
@@ -199,9 +349,9 @@ export const SalesPromotions: React.FC = () => {
 
   // Auto-generate Event Code
   const generateEventCode = (name: string, type: string) => {
-    const prefix = type.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3) || 'EVT';
+    const prefix = (type || 'EVT').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3) || 'EVT';
     const year = new Date().getFullYear();
-    const cleanName = name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+    const cleanName = (name || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
     return `${prefix}-${year}-${cleanName || 'STALL'}`;
   };
 
@@ -405,19 +555,19 @@ export const SalesPromotions: React.FC = () => {
 
   // POS: Add item to event cart
   const handlePOSAddToCart = (product: Product) => {
-    // Verify event has allocated stock
-    const alloc = allocations.find(a => a.eventId === selectedEventId && a.sku === product.sku);
+    // Verify product exists in the isolated active stall allocations
+    const alloc = posAllocations.find(a => a.sku === product.sku);
     if (!alloc) {
-      quickNotification('Not Allocated', 'This product is not allocated to this event inventory.', 'warning');
+      quickNotification('Not Allocated', 'This product is not allocated to your active stall inventory.', 'warning');
       return;
     }
 
-    const available = alloc.allocatedQty - alloc.soldQty - alloc.damagedQty;
+    const available = Math.max(0, alloc.allocatedQty - alloc.soldQty - alloc.damagedQty);
     const existing = posCart.find(item => item.product.id === product.id);
     const currentQty = existing ? existing.quantity : 0;
 
     if (currentQty + 1 > available) {
-      quickNotification('Stock Limit', `Only ${available} units available in event inventory.`, 'alert');
+      quickNotification('Stock Limit', `Only ${available} units available in active stall stock.`, 'alert');
       return;
     }
 
@@ -439,12 +589,12 @@ export const SalesPromotions: React.FC = () => {
     const product = products.find(p => p.id === productId);
     if (!product) return;
 
-    const alloc = allocations.find(a => a.eventId === selectedEventId && a.sku === product.sku);
+    const alloc = posAllocations.find(a => a.sku === product.sku);
     if (!alloc) return;
 
-    const available = alloc.allocatedQty - alloc.soldQty - alloc.damagedQty;
+    const available = Math.max(0, alloc.allocatedQty - alloc.soldQty - alloc.damagedQty);
     if (qty > available) {
-      quickNotification('Stock Limit', `Only ${available} units available in event inventory.`, 'alert');
+      quickNotification('Stock Limit', `Only ${available} units available in active stall stock.`, 'alert');
       return;
     }
 
@@ -497,6 +647,7 @@ export const SalesPromotions: React.FC = () => {
 
     const grandTotal = subtotal - discountAmount;
     const orderNo = `INV-EVT-${Date.now().toString().slice(-6)}`;
+    const cashierDisplayName = currentStall?.managerName || user?.name || selectedEvent.managerName || 'Stall Manager';
 
     const newTx: EventTransaction = {
       id: `etx-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
@@ -509,17 +660,20 @@ export const SalesPromotions: React.FC = () => {
       total: grandTotal,
       paymentMethod: posPaymentMethod,
       timestamp: new Date().toISOString(),
-      cashierName: selectedEvent.managerName || user?.name || 'Store Manager'
+      cashierName: cashierDisplayName
     };
 
-    // Update event inventory allocations sold quantity in state
+    // Update event inventory allocations sold quantity strictly for active stall allocations
     const updatedAllocs = allocations.map(a => {
-      const cartItem = posCart.find(item => item.product.sku === a.sku);
-      if (cartItem && (a.eventId === targetEventId || a.eventId === selectedEventId)) {
-        return {
-          ...a,
-          soldQty: a.soldQty + cartItem.quantity
-        };
+      const isTarget = posAllocations.some(pa => pa.id === a.id);
+      if (isTarget) {
+        const cartItem = posCart.find(item => item.product.sku === a.sku);
+        if (cartItem) {
+          return {
+            ...a,
+            soldQty: a.soldQty + cartItem.quantity
+          };
+        }
       }
       return a;
     });
@@ -544,7 +698,7 @@ export const SalesPromotions: React.FC = () => {
 
     // Persist updated sold quantities for each allocated item in database
     for (const item of posCart) {
-      const matchingAlloc = updatedAllocs.find(a => (a.eventId === targetEventId || a.eventId === selectedEventId) && a.sku === item.product.sku);
+      const matchingAlloc = updatedAllocs.find(a => posAllocations.some(pa => pa.id === a.id) && a.sku === item.product.sku);
       if (matchingAlloc) {
         try {
           await fetch('/api/events/allocations', {
@@ -909,7 +1063,7 @@ export const SalesPromotions: React.FC = () => {
                       </div>
 
                     <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                      {event.description.split('|')[0]}
+                      {(event.description || '').split('|')[0] || event.description || 'No description provided'}
                     </p>
 
                     <div className="mt-4 grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800/60 font-mono text-xs">
@@ -928,13 +1082,13 @@ export const SalesPromotions: React.FC = () => {
                       <div>
                         <span className="text-slate-400 block text-[9px]">Allocated Items</span>
                         <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
-                          {totalItemsAllocated} Units ({event.allocatedSKUs} SKUs)
+                          {totalItemsAllocated} Units ({event.allocatedSKUs || 0} SKUs)
                         </span>
                       </div>
                       <div>
                         <span className="text-slate-400 block text-[9px]">Current Sales</span>
                         <span className="font-bold text-amber-600 font-mono">
-                          ₹{event.currentRevenue.toLocaleString('en-IN')}
+                          ₹{(event.currentRevenue || 0).toLocaleString('en-IN')}
                         </span>
                       </div>
                     </div>
@@ -942,7 +1096,7 @@ export const SalesPromotions: React.FC = () => {
                     {/* Progress relative to Target */}
                     <div className="mt-4 space-y-1">
                       <div className="flex justify-between text-[10px] font-mono">
-                        <span className="text-slate-400">Target: ₹{event.targetRevenue.toLocaleString('en-IN')}</span>
+                        <span className="text-slate-400">Target: ₹{(event.targetRevenue || 0).toLocaleString('en-IN')}</span>
                         <span className="font-bold text-slate-600 dark:text-slate-300">{progress}% reached</span>
                       </div>
                       <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
@@ -1166,7 +1320,7 @@ export const SalesPromotions: React.FC = () => {
                           value={stall.managerEmail}
                           onChange={e => {
                             const email = e.target.value;
-                            const matchedStaff = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+                            const matchedStaff = users.find(u => u.email && (email ? u.email.toLowerCase() === email.toLowerCase() : false));
                             setNewEvent(prev => ({
                               ...prev,
                               stalls: prev.stalls.map(s => s.id === stall.id ? {
@@ -1538,7 +1692,7 @@ export const SalesPromotions: React.FC = () => {
                         <AlertCircle className="w-3.5 h-3.5" />
                         <span>Manager Instruction Note</span>
                       </p>
-                      {selectedEvent?.description.split('|')[1] || 'Ensure stock counts are recorded daily. For cash collections, deposit securely at the central temple account desk daily.'}
+                      {(selectedEvent?.description || '').split('|')[1] || selectedEvent?.description || 'Ensure stock counts are recorded daily. For cash collections, deposit securely at the central temple account desk daily.'}
                     </div>
                   </div>
 
@@ -1708,14 +1862,29 @@ export const SalesPromotions: React.FC = () => {
                   {(selectedEvent?.stalls && selectedEvent.stalls.length > 0 ? selectedEvent.stalls : [
                     { id: 'default', stallName: selectedEvent?.stallLocation || 'Main Temple Stall', managerName: selectedEvent?.managerName || 'Manager', managerContact: '+91 94480 12345', managerEmail: 'manager@iskcon.net', locationSpot: 'Main Courtyard' }
                   ]).map(stall => {
-                    const stallAllocations = eventAllocatedItems.filter(a => a.stallId === stall.id || !a.stallId || a.stallName === stall.stallName);
+                    const stallAllocations = eventAllocatedItems.filter(a => isAllocForStall(a, stall));
                     const totalQty = stallAllocations.reduce((acc, a) => acc + a.allocatedQty, 0);
+                    const isUserStall = userAssignedStalls.some(s => s.id === stall.id);
 
                     return (
-                      <div key={stall.id} className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3">
+                      <div
+                        key={stall.id}
+                        className={`p-4 rounded-2xl bg-white dark:bg-slate-900 border shadow-2xs space-y-3 transition-all ${
+                          isUserStall
+                            ? 'border-emerald-400 dark:border-emerald-600 ring-2 ring-emerald-500/10'
+                            : 'border-slate-200 dark:border-slate-800'
+                        }`}
+                      >
                         <div className="flex justify-between items-start">
                           <div>
-                            <span className="text-[9px] font-mono font-bold text-amber-600 uppercase">Stall / Sub-Location</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] font-mono font-bold text-amber-600 uppercase">Stall / Sub-Location</span>
+                              {isUserStall && (
+                                <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-mono text-[8px] font-bold border border-emerald-300">
+                                  Your Stall
+                                </span>
+                              )}
+                            </div>
                             <h4 className="font-bold text-sm text-slate-900 dark:text-white font-display mt-0.5">{stall.stallName}</h4>
                           </div>
                           <span className="px-2.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 font-mono text-[10px] font-bold border border-amber-200">
@@ -1759,25 +1928,56 @@ export const SalesPromotions: React.FC = () => {
 
               {/* Allocation List */}
               <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
-                <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800/80">
-                  <h3 className="font-bold text-sm text-slate-950 dark:text-white uppercase font-mono tracking-wider">
-                    Allocated Items Inventory Ledger
-                  </h3>
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    Total SKUs Allocated: {eventAllocatedItems.length}
-                  </span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800/80 gap-3">
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-950 dark:text-white uppercase font-mono tracking-wider flex items-center gap-2">
+                      <Boxes className="w-4 h-4 text-amber-500" />
+                      <span>Allocated Items Inventory Ledger</span>
+                    </h3>
+                    {!canAdminOverride && userAssignedStalls.length > 0 && (
+                      <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                        Restricted to your stall: <span className="font-bold text-[#B45309] dark:text-amber-400">{userAssignedStalls[0].stallName}</span> ({userEmail})
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 font-mono text-xs">
+                    {canAdminOverride ? (
+                      <div className="flex items-center gap-2">
+                        <label className="text-slate-400 text-[10px] font-bold uppercase">Stall Filter:</label>
+                        <select
+                          value={ledgerStallFilter}
+                          onChange={e => setLedgerStallFilter(e.target.value)}
+                          className="px-2.5 py-1 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-900 dark:text-white"
+                        >
+                          <option value="all">🌐 All Stalls ({eventAllocatedItems.length} Total SKUs)</option>
+                          {stallsInEvent.map(st => (
+                            <option key={st.id} value={st.id}>
+                              🏪 {st.stallName} ({st.managerEmail})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        Total SKUs Allocated: {visibleAllocations.length}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {eventAllocatedItems.length === 0 ? (
+                {visibleAllocations.length === 0 ? (
                   <p className="p-12 text-center text-xs text-slate-400">
-                    No items allocated yet. Transfer items using the form above.
+                    {!canAdminOverride && userAssignedStalls.length === 0
+                      ? 'No stall is assigned to your account in this event.'
+                      : 'No items allocated yet for this stall manifest.'}
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
                         <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-mono font-bold uppercase text-[9px]">
-                          <th className="pb-3">Product Name / SKU</th>
+                          <th className="pb-3">Product Name / SKU / Stall</th>
                           <th className="pb-3 text-center">Allocated Qty</th>
                           <th className="pb-3 text-center">Sold Qty</th>
                           <th className="pb-3 text-center">Damaged Qty</th>
@@ -1789,16 +1989,23 @@ export const SalesPromotions: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
-                        {eventAllocatedItems.map(a => {
+                        {visibleAllocations.map(a => {
                           const remaining = Math.max(0, a.allocatedQty - a.soldQty - a.damagedQty);
                           const isEditing = editingAllocationId === a.id;
 
                           return (
                             <tr key={a.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20">
                               <td className="py-3">
-                                <p className="font-bold text-slate-900 dark:text-white leading-tight">
-                                  {a.productName}
-                                </p>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <p className="font-bold text-slate-900 dark:text-white leading-tight">
+                                    {a.productName}
+                                  </p>
+                                  {a.stallName && (
+                                    <span className="px-1.5 py-0.2 rounded bg-amber-50 dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 border border-amber-200/60 font-mono text-[9px] font-bold">
+                                      🏪 {a.stallName}
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-slate-400 font-mono mt-0.5">{a.sku}</p>
                               </td>
                               <td className="py-3 text-center font-mono">{a.allocatedQty}</td>
@@ -1909,203 +2116,294 @@ export const SalesPromotions: React.FC = () => {
                     Start & Launch Event POS now
                   </button>
                 </div>
+              ) : !canAdminOverride && userAssignedStalls.length === 0 ? (
+                <div className="p-8 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-center space-y-3">
+                  <ShieldAlert className="w-10 h-10 text-rose-500 mx-auto" />
+                  <h3 className="text-sm font-bold text-rose-900 dark:text-rose-200">
+                    Stall Terminal Access Restricted
+                  </h3>
+                  <p className="text-xs text-rose-700 dark:text-rose-300 max-w-md mx-auto">
+                    Logged in as <span className="font-mono font-bold">{user?.email}</span> ({userRole}). Your email is not mapped to any stall in this event (<span className="font-bold">{selectedEvent?.name}</span>). Each stall manager can only view and checkout items allocated to their designated stall.
+                  </p>
+                  <div className="pt-2 text-[11px] font-mono text-slate-500">
+                    Please contact the Event Administrator or log in with an authorized stall manager account.
+                  </div>
+                </div>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                  {/* Left Side: Product catalog selection & search */}
-                  <div className="lg:col-span-2 space-y-4">
-                    <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3">
-                      <div className="relative">
-                        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          value={posSearch}
-                          onChange={e => setPosSearch(e.target.value)}
-                          className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none"
-                          placeholder="Search allocated books / gift items manually or enter product barcode..."
-                        />
+                <div className="space-y-4">
+                  {/* Stall Session Context Header Banner */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-200/80 dark:border-amber-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs">
+                        <Store className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-[#B45309] dark:text-amber-400">
+                            {canAdminOverride && activeStallId === 'all' ? 'Consolidated Event Catalog' : 'Active Stall POS Terminal'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-mono text-[10px] font-bold border border-emerald-200 flex items-center gap-1">
+                            <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                            <span>Session: {user?.email}</span>
+                          </span>
+                          {!canAdminOverride && (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-[#B45309] dark:text-amber-300 font-mono text-[9px] font-bold border border-amber-300">
+                              Isolated Stall Manifest
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="font-bold text-sm text-slate-900 dark:text-white font-display mt-0.5">
+                          {currentStall ? (
+                            <>
+                              Stall: <span className="text-[#B45309] dark:text-amber-300 font-bold">{currentStall.stallName}</span>
+                              <span className="text-slate-400 font-normal ml-1.5 text-xs">
+                                ({currentStall.managerName || 'Manager'} • {currentStall.managerEmail})
+                              </span>
+                            </>
+                          ) : (
+                            <span>All Stalls (Combined Event Ledger)</span>
+                          )}
+                        </h3>
                       </div>
                     </div>
 
-                    {/* Products grid */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {products
-                        .filter(p => {
-                          const alloc = allocations.find(a => a.eventId === selectedEventId && a.sku === p.sku);
-                          if (!alloc) return false;
-                          const matchesSearch =
-                            p.name.toLowerCase().includes(posSearch.toLowerCase()) ||
-                            p.sku.toLowerCase().includes(posSearch.toLowerCase()) ||
-                            p.barcode === posSearch;
-                          return matchesSearch;
-                        })
-                        .map(p => {
-                          const alloc = allocations.find(a => a.eventId === selectedEventId && a.sku === p.sku)!;
-                          const remaining = Math.max(0, alloc.allocatedQty - alloc.soldQty - alloc.damagedQty);
-
-                          return (
-                            <div
-                              key={p.id}
-                              onClick={() => {
-                                if (remaining > 0) handlePOSAddToCart(p);
-                              }}
-                              className={`p-4 rounded-2xl bg-white dark:bg-slate-900 border hover:border-amber-500/50 transition-all cursor-pointer flex flex-col justify-between space-y-3 relative overflow-hidden group ${
-                                remaining === 0
-                                  ? 'opacity-60 border-slate-200 cursor-not-allowed bg-slate-50/50'
-                                  : 'border-slate-200 dark:border-slate-800 shadow-2xs'
-                              }`}
-                            >
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <span className="text-[9px] font-mono font-bold uppercase text-slate-400">
-                                    {p.category}
-                                  </span>
-                                  <h4 className="font-bold text-xs text-slate-950 dark:text-white mt-0.5 line-clamp-1 font-display">
-                                    {p.name}
-                                  </h4>
-                                </div>
-                                <span className="font-bold font-mono text-[#D97706] text-xs">₹{p.price}</span>
-                              </div>
-
-                              <div className="flex justify-between items-center text-[10px] font-mono">
-                                <span className="text-slate-400">Available:</span>
-                                <span className={`font-bold ${remaining === 0 ? 'text-rose-500' : 'text-emerald-600'}`}>
-                                  {remaining === 0 ? 'OUT OF STOCK' : `${remaining} units`}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
+                    {/* Stall Switcher: Admins can choose all or any stall; Multi-stall managers can choose between their assigned stalls */}
+                    {(canAdminOverride || userAssignedStalls.length > 1) && (
+                      <div className="flex items-center gap-2 font-mono text-xs">
+                        <label className="text-slate-500 whitespace-nowrap text-[11px] font-bold">
+                          {canAdminOverride ? 'Admin Stall View:' : 'Your Stalls:'}
+                        </label>
+                        <select
+                          value={activeStallId}
+                          onChange={e => {
+                            setActiveStallId(e.target.value);
+                            setPosCart([]);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-900 dark:text-white font-bold text-xs focus:ring-2 focus:ring-amber-500/20"
+                        >
+                          {canAdminOverride && (
+                            <option value="all">🌐 All Stalls (Combined Event Ledger)</option>
+                          )}
+                          {(canAdminOverride ? stallsInEvent : userAssignedStalls).map(st => (
+                            <option key={st.id} value={st.id}>
+                              🏪 {st.stallName} ({st.managerEmail})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Right Side: Event Cart */}
-                  <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
-                    <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-                      <h3 className="font-bold text-sm text-slate-950 dark:text-white uppercase font-mono tracking-wider flex items-center gap-2">
-                        <ShoppingCart className="w-4 h-4 text-amber-500" />
-                        <span>Event Cart</span>
-                      </h3>
-                      {posCart.length > 0 && (
-                        <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                          <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 font-medium border border-blue-200/80 dark:border-blue-800/80">
-                            {posCart.length} {posCart.length === 1 ? 'item' : 'items'}
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-200/80 dark:border-emerald-800/80">
-                            {posCart.reduce((acc, it) => acc + it.quantity, 0)} {posCart.reduce((acc, it) => acc + it.quantity, 0) === 1 ? 'unit' : 'units'}
-                          </span>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                    {/* Left Side: Product catalog selection & search */}
+                    <div className="lg:col-span-2 space-y-4">
+                      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3">
+                        <div className="relative">
+                          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            value={posSearch}
+                            onChange={e => setPosSearch(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none"
+                            placeholder="Search allocated books / gift items in your stall manifest..."
+                          />
                         </div>
-                      )}
-                    </div>
+                      </div>
 
-                    {posCart.length === 0 ? (
-                      <p className="p-12 text-center text-slate-400 text-xs">Event cart is empty. Click items to add.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
-                          {posCart.map(item => {
-                            const lineTotal = item.product.price * item.quantity;
-                            const lineDiscount = (lineTotal * item.discount) / 100;
+                      {/* Products grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {posAllocations.length === 0 ? (
+                          <div className="col-span-full p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-400 space-y-2">
+                            <Boxes className="w-8 h-8 mx-auto text-slate-300" />
+                            <p className="font-bold text-xs text-slate-600 dark:text-slate-300">No stock allocated to this stall manifest</p>
+                            <p className="text-[11px]">Transfer stock to this stall using the "Inventory & Allocation" tab to begin selling.</p>
+                          </div>
+                        ) : products
+                          .filter(p => {
+                            const alloc = posAllocations.find(a => a.sku === p.sku);
+                            if (!alloc) return false;
+                            const matchesSearch =
+                              p.name.toLowerCase().includes(posSearch.toLowerCase()) ||
+                              p.sku.toLowerCase().includes(posSearch.toLowerCase()) ||
+                              p.barcode === posSearch;
+                            return matchesSearch;
+                          })
+                          .map(p => {
+                            const alloc = posAllocations.find(a => a.sku === p.sku)!;
+                            const remaining = Math.max(0, alloc.allocatedQty - alloc.soldQty - alloc.damagedQty);
+
                             return (
                               <div
-                                key={item.product.id}
-                                className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-xs space-y-1.5"
+                                key={p.id}
+                                onClick={() => {
+                                  if (remaining > 0) handlePOSAddToCart(p);
+                                }}
+                                className={`p-4 rounded-2xl bg-white dark:bg-slate-900 border hover:border-amber-500/50 transition-all cursor-pointer flex flex-col justify-between space-y-3 relative overflow-hidden group ${
+                                  remaining === 0
+                                    ? 'opacity-60 border-slate-200 cursor-not-allowed bg-slate-50/50'
+                                    : 'border-slate-200 dark:border-slate-800 shadow-2xs'
+                                }`}
                               >
-                                <div className="flex justify-between items-start font-medium">
-                                  <span className="font-bold truncate max-w-[120px]">{item.product.name}</span>
-                                  <span className="font-mono font-bold">₹{(lineTotal - lineDiscount).toFixed(2)}</span>
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] font-mono font-bold uppercase text-slate-400">
+                                        {p.category}
+                                      </span>
+                                      {alloc.stallName && (
+                                        <span className="text-[9px] font-mono font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1 rounded border border-amber-200/60">
+                                          {alloc.stallName}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <h4 className="font-bold text-xs text-slate-950 dark:text-white mt-0.5 line-clamp-1 font-display">
+                                      {p.name}
+                                    </h4>
+                                  </div>
+                                  <span className="font-bold font-mono text-[#D97706] text-xs">₹{p.price}</span>
                                 </div>
 
-                                <div className="flex justify-between items-center text-[10px]">
-                                  <div className="flex items-center gap-1 border border-slate-200 rounded px-1.5 py-0.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => handlePOSUpdateQty(item.product.id, item.quantity - 1)}
-                                      className="font-bold text-slate-400 hover:text-slate-700"
-                                    >
-                                      -
-                                    </button>
-                                    <span className="font-mono font-bold px-1">{item.quantity}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => handlePOSUpdateQty(item.product.id, item.quantity + 1)}
-                                      className="font-bold text-slate-400 hover:text-slate-700"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-
-                                  <div className="flex items-center gap-1 font-mono">
-                                    <span className="text-slate-400">Discount:</span>
-                                    <select
-                                      value={item.discount}
-                                      onChange={e => {
-                                        const disc = Number(e.target.value);
-                                        setPosCart(prev =>
-                                          prev.map(c =>
-                                            c.product.id === item.product.id
-                                              ? { ...c, discount: disc }
-                                              : c
-                                          )
-                                        );
-                                      }}
-                                      className="border rounded bg-transparent focus:outline-none"
-                                    >
-                                      <option value={0}>0%</option>
-                                      <option value={10}>10%</option>
-                                      <option value={20}>20%</option>
-                                      <option value={50}>50%</option>
-                                    </select>
-                                  </div>
+                                <div className="flex justify-between items-center text-[10px] font-mono">
+                                  <span className="text-slate-400">Available:</span>
+                                  <span className={`font-bold ${remaining === 0 ? 'text-rose-500' : 'text-emerald-600'}`}>
+                                    {remaining === 0 ? 'OUT OF STOCK' : `${remaining} units`}
+                                  </span>
                                 </div>
                               </div>
                             );
                           })}
-                        </div>
+                      </div>
+                    </div>
 
-                        {/* Payment & sales options */}
-                        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
-                          <div>
-                            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase block mb-1">
-                              Payment Method
+                    {/* Right Side: Event Cart */}
+                    <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                        <h3 className="font-bold text-sm text-slate-950 dark:text-white uppercase font-mono tracking-wider flex items-center gap-2">
+                          <ShoppingCart className="w-4 h-4 text-amber-500" />
+                          <span>Event Cart</span>
+                        </h3>
+                        {posCart.length > 0 && (
+                          <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                            <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 font-medium border border-blue-200/80 dark:border-blue-800/80">
+                              {posCart.length} {posCart.length === 1 ? 'item' : 'items'}
                             </span>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setPosPaymentMethod('upi')}
-                                className={`py-1.5 rounded-xl border text-center font-bold transition-all ${
-                                  posPaymentMethod === 'upi'
-                                    ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                                    : 'border-slate-200 text-slate-600'
-                                }`}
-                              >
-                                UPI Payment
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setPosPaymentMethod('cash')}
-                                className={`py-1.5 rounded-xl border text-center font-bold transition-all ${
-                                  posPaymentMethod === 'cash'
-                                    ? 'bg-amber-50 border-amber-200 text-[#B45309]'
-                                    : 'border-slate-200 text-slate-600'
-                                }`}
-                              >
-                                Cash Payment
-                              </button>
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-200/80 dark:border-emerald-800/80">
+                              {posCart.reduce((acc, it) => acc + it.quantity, 0)} {posCart.reduce((acc, it) => acc + it.quantity, 0) === 1 ? 'unit' : 'units'}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {posCart.length === 0 ? (
+                        <p className="p-12 text-center text-slate-400 text-xs">Event cart is empty. Click items to add.</p>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
+                            {posCart.map(item => {
+                              const lineTotal = item.product.price * item.quantity;
+                              const lineDiscount = (lineTotal * item.discount) / 100;
+                              return (
+                                <div
+                                  key={item.product.id}
+                                  className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-xs space-y-1.5"
+                                >
+                                  <div className="flex justify-between items-start font-medium">
+                                    <span className="font-bold truncate max-w-[120px]">{item.product.name}</span>
+                                    <span className="font-mono font-bold">₹{(lineTotal - lineDiscount).toFixed(2)}</span>
+                                  </div>
+
+                                  <div className="flex justify-between items-center text-[10px]">
+                                    <div className="flex items-center gap-1 border border-slate-200 rounded px-1.5 py-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handlePOSUpdateQty(item.product.id, item.quantity - 1)}
+                                        className="font-bold text-slate-400 hover:text-slate-700"
+                                      >
+                                        -
+                                      </button>
+                                      <span className="font-mono font-bold px-1">{item.quantity}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handlePOSUpdateQty(item.product.id, item.quantity + 1)}
+                                        className="font-bold text-slate-400 hover:text-slate-700"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+
+                                    <div className="flex items-center gap-1 font-mono">
+                                      <span className="text-slate-400">Discount:</span>
+                                      <select
+                                        value={item.discount}
+                                        onChange={e => {
+                                          const disc = Number(e.target.value);
+                                          setPosCart(prev =>
+                                            prev.map(c =>
+                                              c.product.id === item.product.id
+                                                ? { ...c, discount: disc }
+                                                : c
+                                            )
+                                          );
+                                        }}
+                                        className="border rounded bg-transparent focus:outline-none"
+                                      >
+                                        <option value={0}>0%</option>
+                                        <option value={10}>10%</option>
+                                        <option value={20}>20%</option>
+                                        <option value={50}>50%</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Payment & sales options */}
+                          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                            <div>
+                              <span className="text-[10px] font-mono font-bold text-slate-400 uppercase block mb-1">
+                                Payment Method
+                              </span>
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setPosPaymentMethod('upi')}
+                                  className={`py-1.5 rounded-xl border text-center font-bold transition-all ${
+                                    posPaymentMethod === 'upi'
+                                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                      : 'border-slate-200 text-slate-600'
+                                  }`}
+                                >
+                                  UPI Payment
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPosPaymentMethod('cash')}
+                                  className={`py-1.5 rounded-xl border text-center font-bold transition-all ${
+                                    posPaymentMethod === 'cash'
+                                      ? 'bg-amber-50 border-amber-200 text-[#B45309]'
+                                      : 'border-slate-200 text-slate-600'
+                                  }`}
+                                >
+                                  Cash Payment
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        {/* Checkout button */}
-                        <button
-                          type="button"
-                          onClick={handlePOSCheckout}
-                          className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold font-mono text-xs shadow-md mt-2 transition-all flex items-center justify-center gap-1.5"
-                        >
-                          <ShoppingCart className="w-4 h-4" />
-                          <span>COMPLETE STALL CHECKOUT</span>
-                        </button>
-                      </div>
-                    )}
+                          {/* Checkout button */}
+                          <button
+                            type="button"
+                            onClick={handlePOSCheckout}
+                            className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold font-mono text-xs shadow-md mt-2 transition-all flex items-center justify-center gap-1.5"
+                          >
+                            <ShoppingCart className="w-4 h-4" />
+                            <span>COMPLETE STALL CHECKOUT</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

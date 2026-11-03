@@ -7,6 +7,7 @@ import { INITIAL_BRANCHES } from '../../data/initialData';
 import {
   ALL_SYSTEM_MODULES,
   isSuperAdmin,
+  isEventStaff,
   getDefaultPermissionsForRole
 } from '../../lib/authUtils';
 import {
@@ -224,7 +225,8 @@ export const UserManagement: React.FC = () => {
         roleFilter === 'all' ||
         (roleFilter === 'superadmin' && isSuperAdmin(u)) ||
         (roleFilter === 'manager' && (u.role === 'Store Manager' || u.role === 'Branch Admin')) ||
-        (roleFilter === 'executive' && (u.role === 'Store Executive' || u.role === 'Cashier' || u.role === 'Lead Cashier'));
+        (roleFilter === 'executive' && (u.role === 'Store Executive' || u.role === 'Cashier' || u.role === 'Lead Cashier')) ||
+        (roleFilter === 'event_staff' && (u.role === 'Event Staff / Stall Manager' || isEventStaff(u)));
 
       // Branch filter
       const matchBranch =
@@ -302,6 +304,7 @@ export const UserManagement: React.FC = () => {
             <option value="superadmin">Super Admins</option>
             <option value="manager">Store Managers / Admins</option>
             <option value="executive">Store Executives / Staff</option>
+            <option value="event_staff">Event Staff / Stall Managers</option>
           </select>
 
           {/* Branch Filter */}
@@ -337,6 +340,7 @@ export const UserManagement: React.FC = () => {
           const initials = u.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
           const isMe = u.id === currentUser.id;
           const isSuper = isSuperAdmin(u);
+          const isEvent = u.role === 'Event Staff / Stall Manager' || isEventStaff(u);
           const isExecutive = u.role === 'Store Executive';
 
           return (
@@ -354,6 +358,8 @@ export const UserManagement: React.FC = () => {
                 <div className={`w-11 h-11 rounded-full overflow-hidden shrink-0 border-2 shadow-xs flex items-center justify-center ${
                   isSuper
                     ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : isEvent
+                    ? 'border-amber-600 bg-amber-50 text-amber-800'
                     : isExecutive
                     ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
                     : 'border-amber-500 bg-amber-50 text-amber-700'
@@ -415,6 +421,8 @@ export const UserManagement: React.FC = () => {
                     <span className={`inline-block px-2 py-0.5 rounded-md font-bold text-[10px] truncate ${
                       isSuper
                         ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-200'
+                        : isEvent
+                        ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-200 border border-amber-300/60 font-black'
                         : isExecutive
                         ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-200'
                         : 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-200'
@@ -640,6 +648,7 @@ export const UserManagement: React.FC = () => {
                     <option value="Branch Admin">Branch Admin / Store Manager (Elevated Branch Access)</option>
                     <option value="Store Manager">Store Manager (Store Inventory, POS, Orders & Reports)</option>
                     <option value="Store Executive">Staff / Store Executive (Restricted Operational Access: POS, Catalog, Events)</option>
+                    <option value="Event Staff / Stall Manager">Event Staff / Stall Manager (Restricted to Sales Events & POS Checkout Stalls)</option>
                     <option value="Warehouse Manager">Warehouse Manager (Inward GRN, Inventory, Barcodes)</option>
                     <option value="Lead Cashier">Lead Cashier (POS Checkout & Catalog)</option>
                     <option value="Cashier">Cashier (POS Checkout Stalls)</option>
@@ -814,6 +823,13 @@ export const UserManagement: React.FC = () => {
                   
                   {/* Preset quick buttons */}
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPermissions(['events', 'pos'])}
+                      className="px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 rounded-md border border-amber-200 dark:border-amber-800 cursor-pointer hover:bg-amber-100"
+                    >
+                      Stall Staff (Events & POS Only)
+                    </button>
                     <button
                       type="button"
                       onClick={() => setSelectedPermissions(['dashboard', 'pos', 'products', 'events'])}

@@ -43,7 +43,7 @@ import {
   INITIAL_SALES_TAGS,
   INITIAL_SUPPLIERS
 } from '../data/initialData';
-import { GLOBAL_ALL_BRANCHES, isSuperAdmin, isBranchAdmin, getDefaultPermissionsForRole } from '../lib/authUtils';
+import { GLOBAL_ALL_BRANCHES, isSuperAdmin, isBranchAdmin, isEventStaff, getDefaultPermissionsForRole } from '../lib/authUtils';
 import { isProductInZone, allocateFifoCartItems, getActiveBatchPrice, getActiveBatch } from '../lib/warehouseUtils';
 import { generateEan13Barcode } from '../lib/barcodeUtils';
 
@@ -144,6 +144,17 @@ const ERPContext = createContext<ERPContextType | undefined>(undefined);
 export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeModule, setActiveModuleState] = useState<ModuleType | 'audit'>(() => {
     if (typeof window !== 'undefined') {
+      const storedUserStr = localStorage.getItem('iskcon_erp_user');
+      if (storedUserStr) {
+        try {
+          const parsedUser = JSON.parse(storedUserStr);
+          if (parsedUser?.role === 'Event Staff / Stall Manager' || isEventStaff(parsedUser)) {
+            const path = window.location.pathname.replace(/^\//, '');
+            if (path === 'pos' || path === 'events') return path as ModuleType;
+            return 'events';
+          }
+        } catch (e) {}
+      }
       const path = window.location.pathname.replace(/^\//, '');
       const validModules: (ModuleType | 'audit')[] = ['dashboard', 'products', 'inward', 'inventory', 'pos', 'barcode', 'events', 'reports', 'settings', 'audit', 'recycle_bin'];
       if (validModules.includes(path as ModuleType | 'audit')) {
@@ -1182,11 +1193,15 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try {
           const parsed = JSON.parse(stored);
           if (parsed && parsed.name) {
-            const perms = Array.isArray(parsed.permissions) ? [...parsed.permissions] : [];
-            if (!perms.includes('products')) perms.push('products');
-            if (!perms.includes('suppliers')) perms.push('suppliers');
+            const isEventUser = parsed.role === 'Event Staff / Stall Manager' || isEventStaff(parsed);
+            const perms = Array.isArray(parsed.permissions) && parsed.permissions.length > 0
+              ? [...parsed.permissions]
+              : (getDefaultPermissionsForRole(parsed.role) as ModuleType[]);
             
-            const updatedUser = { ...parsed, permissions: perms };
+            const updatedUser = {
+              ...parsed,
+              permissions: isEventUser ? perms.filter(p => p === 'events' || p === 'pos') : perms
+            };
             localStorage.setItem('iskcon_erp_user', JSON.stringify(updatedUser));
             return updatedUser;
           }
@@ -2866,8 +2881,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }).catch(e => console.warn(e));
 
       // Auto-route on login if they don't have access to dashboard
-      const allowed = foundUser.permissions || [];
-      if (!allowed.includes('dashboard') && allowed.length > 0) {
+      const isEventUser = foundUser.role === 'Event Staff / Stall Manager' || isEventStaff(foundUser);
+      const allowed = foundUser.permissions && foundUser.permissions.length > 0
+        ? foundUser.permissions
+        : (getDefaultPermissionsForRole(foundUser.role) as ModuleType[]);
+      if (isEventUser) {
+        setActiveModule('events');
+      } else if (!allowed.includes('dashboard') && allowed.length > 0) {
         setActiveModule(allowed[0]);
       } else {
         setActiveModule('dashboard');

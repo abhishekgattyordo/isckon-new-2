@@ -46,6 +46,18 @@ export function isStoreExecutive(user?: UserProfile | null): boolean {
   return role === 'store executive' || role === 'staff' || role === 'lead cashier' || role === 'cashier';
 }
 
+export function isEventStaff(user?: UserProfile | null): boolean {
+  if (!user) return false;
+  const role = (user.role || '').toLowerCase().trim();
+  return (
+    role === 'event staff / stall manager' ||
+    role === 'event staff' ||
+    role === 'stall manager' ||
+    role.includes('event staff') ||
+    role.includes('stall manager')
+  );
+}
+
 export function getDefaultPermissionsForRole(role: UserProfile['role']): (ModuleType | 'audit')[] {
   switch (role) {
     case 'Super Admin':
@@ -60,6 +72,9 @@ export function getDefaultPermissionsForRole(role: UserProfile['role']): (Module
     case 'Store Executive':
       // Restricted operational access: POS Checkout Stalls, Product Catalog, Sales Events & Stalls, Suppliers & Vendors
       return ['dashboard', 'pos', 'products', 'events', 'suppliers', 'inventory', 'stock_audit'];
+    case 'Event Staff / Stall Manager':
+      // Strictly restricted to Sales Events & Stalls and POS Checkout Stalls
+      return ['events', 'pos'];
     case 'Lead Cashier':
     case 'Cashier':
       return ['dashboard', 'pos', 'products'];
@@ -77,13 +92,16 @@ export function canAccessModule(user: UserProfile | null | undefined, module: Mo
     return true;
   }
 
-  // Core foundational modules accessible to all authenticated staff
-  if (module === 'dashboard' || module === 'products') {
-    return true;
+  // Event Staff / Stall Manager: strictly limited to 'events' and 'pos'
+  if (isEventStaff(user) || user.role === 'Event Staff / Stall Manager') {
+    if (user.permissions && Array.isArray(user.permissions) && user.permissions.length > 0) {
+      return (module === 'events' || module === 'pos') && user.permissions.includes(module as ModuleType);
+    }
+    return module === 'events' || module === 'pos';
   }
 
   // Check explicit assigned permissions array
-  if (user.permissions && Array.isArray(user.permissions)) {
+  if (user.permissions && Array.isArray(user.permissions) && user.permissions.length > 0) {
     if (module === ('users' as any)) {
       return (
         isSuperAdmin(user) ||
@@ -98,7 +116,7 @@ export function canAccessModule(user: UserProfile | null | undefined, module: Mo
         user.permissions.includes('reports')
       );
     }
-    if (user.permissions.includes(module as ModuleType)) return true;
+    return user.permissions.includes(module as ModuleType);
   }
 
   // Fallback to role defaults

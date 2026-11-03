@@ -335,13 +335,48 @@ export async function updateEventService(id: string, updates: Partial<SalesEvent
   return null;
 }
 
-export async function getEventAllocations(eventId?: string): Promise<EventAllocation[]> {
+export async function getAllocatedInventory(
+  eventId?: string,
+  userEmail?: string,
+  userRole?: string,
+  stallId?: string
+): Promise<EventAllocation[]> {
+  const isAdmin = userRole === 'Super Admin' || userRole === 'System Admin' || userRole === 'Administrator';
+  const cleanEmail = userEmail ? userEmail.trim().toLowerCase() : undefined;
+
   try {
     if (process.env.DATABASE_URL) {
+      let userStallIds: string[] = [];
+      if (!isAdmin && cleanEmail && eventId) {
+        const matchingStalls = await prisma.eventStall.findMany({
+          where: {
+            eventId,
+            managerEmail: { equals: cleanEmail, mode: 'insensitive' }
+          }
+        });
+        userStallIds = matchingStalls.map(s => s.id);
+      }
+
+      const whereConditions: any[] = [];
+      if (eventId) {
+        whereConditions.push({ eventId });
+      }
+      if (stallId) {
+        whereConditions.push({ stallId });
+      } else if (!isAdmin && cleanEmail) {
+        whereConditions.push({
+          OR: [
+            ...(userStallIds.length > 0 ? [{ stallId: { in: userStallIds } }] : []),
+            { managerEmail: { equals: cleanEmail, mode: 'insensitive' } }
+          ]
+        });
+      }
+
       const records = await prisma.eventAllocation.findMany({
-        where: eventId ? { eventId } : undefined,
+        where: whereConditions.length > 0 ? { AND: whereConditions } : undefined,
         orderBy: { createdAt: 'desc' }
       });
+
       return records.map(r => ({
         id: r.id,
         eventId: r.eventId,
@@ -359,11 +394,42 @@ export async function getEventAllocations(eventId?: string): Promise<EventAlloca
       }));
     }
   } catch (error) {
-    console.warn('Prisma getEventAllocations failed:', error);
+    console.warn('Prisma getAllocatedInventory failed, falling back to MemoryDb:', error);
   }
 
-  const list = MemoryDb.eventAllocations || [];
-  return eventId ? list.filter(a => a.eventId === eventId) : list;
+  let list = MemoryDb.eventAllocations || [];
+  if (eventId) {
+    list = list.filter(a => a.eventId === eventId);
+  }
+  if (stallId) {
+    list = list.filter(a => a.stallId === stallId);
+  } else if (!isAdmin && cleanEmail) {
+    const event = (MemoryDb.events || []).find(e => e.id === eventId);
+    const userStallIds = (event?.stalls || [])
+      .filter(s => s.managerEmail && s.managerEmail.trim().toLowerCase() === cleanEmail)
+      .map(s => s.id);
+    const userStallNames = (event?.stalls || [])
+      .filter(s => s.managerEmail && s.managerEmail.trim().toLowerCase() === cleanEmail)
+      .map(s => s.stallName.toLowerCase());
+
+    list = list.filter(a => {
+      const emailMatches = Boolean(a.managerEmail && a.managerEmail.trim().toLowerCase() === cleanEmail);
+      const stallIdMatches = Boolean(a.stallId && userStallIds.includes(a.stallId));
+      const stallNameMatches = Boolean(a.stallName && userStallNames.includes(a.stallName.toLowerCase()));
+      return emailMatches || stallIdMatches || stallNameMatches;
+    });
+  }
+
+  return list;
+}
+
+export async function getEventAllocations(
+  eventId?: string,
+  userEmail?: string,
+  userRole?: string,
+  stallId?: string
+): Promise<EventAllocation[]> {
+  return getAllocatedInventory(eventId, userEmail, userRole, stallId);
 }
 
 export async function saveEventAllocation(data: EventAllocation): Promise<EventAllocation> {

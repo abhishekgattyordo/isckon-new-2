@@ -3,7 +3,7 @@
 import React from 'react';
 import { ModuleType } from '@/types';
 import { useERP } from '@/context/ERPContext';
-import { canAccessModule, getModuleLabel, getDefaultPermissionsForRole } from '@/lib/authUtils';
+import { canAccessModule, getModuleLabel, getDefaultPermissionsForRole, isEventStaff } from '@/lib/authUtils';
 import { ShieldAlert, ArrowLeft, Lock, UserCheck } from 'lucide-react';
 
 // Import all main module components statically to avoid dynamic chunk loading failures
@@ -34,12 +34,23 @@ export default function CatchAllPageClient({ initialModule }: { initialModule?: 
   // Route Guard / Middleware enforcement
   const isAllowed = canAccessModule(user, currentMod);
 
+  // Auto-route Event Staff to 'events' if landing on dashboard or an unauthorized page
+  React.useEffect(() => {
+    const isEventUser = user?.role === 'Event Staff / Stall Manager' || isEventStaff(user);
+    if (isEventUser && !canAccessModule(user, currentMod)) {
+      setActiveModule('events');
+    }
+  }, [user, currentMod, setActiveModule]);
+
   if (!isAllowed) {
     // Determine the user's first allowed module to safely redirect
+    const isEventUser = user?.role === 'Event Staff / Stall Manager' || isEventStaff(user);
     const userPerms = user?.permissions && user.permissions.length > 0
       ? user.permissions
-      : getDefaultPermissionsForRole(user?.role || 'Store Executive');
-    const firstAllowed = userPerms[0] || 'dashboard';
+      : (getDefaultPermissionsForRole(user?.role || 'Store Executive') as ModuleType[]);
+    const firstAllowed = isEventUser
+      ? (userPerms.includes('events') ? 'events' : (userPerms.includes('pos') ? 'pos' : 'events'))
+      : (userPerms[0] || 'dashboard');
 
     return (
       <div className="min-h-[65vh] flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">

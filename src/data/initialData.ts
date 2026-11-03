@@ -163,6 +163,20 @@ export const INITIAL_USERS: UserProfile[] = [
     password: '111111'
   },
   {
+    id: 'user-abhishek-event-staff',
+    name: 'Abhishek (Stall Operator)',
+    email: 'abhishekgatty21@gmail.com',
+    role: 'Event Staff / Stall Manager',
+    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+    branch: 'Bangalore ISKCON Sri Radha Krishna Temple',
+    branchId: 'branch-bangalore',
+    accessibleBranchIds: ['branch-bangalore'],
+    shift: '08:00 – 17:00 IST',
+    isActive: true,
+    permissions: ['events', 'pos'],
+    password: '111'
+  },
+  {
     id: 'user-mangalore-1',
     name: 'Gaurav Das (Mangalore Store Lead)',
     email: 'mangalore.store@aura-retail.org',

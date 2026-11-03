@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
+  getAllocatedInventory,
   getEventAllocations,
   saveEventAllocation,
   deleteEventAllocation
@@ -13,15 +14,10 @@ export async function GET(req: NextRequest) {
     const eventId = searchParams.get('eventId') || undefined;
     const stallId = searchParams.get('stallId') || undefined;
     const managerEmail = searchParams.get('managerEmail') || undefined;
+    const userEmail = searchParams.get('userEmail') || managerEmail || undefined;
+    const userRole = searchParams.get('userRole') || undefined;
 
-    let allocations = await getEventAllocations(eventId).catch(() => []);
-    if (stallId) {
-      allocations = allocations.filter(a => a.stallId === stallId);
-    }
-    if (managerEmail) {
-      const emailLower = managerEmail.toLowerCase();
-      allocations = allocations.filter(a => a.managerEmail && a.managerEmail.toLowerCase() === emailLower);
-    }
+    const allocations = await getAllocatedInventory(eventId, userEmail, userRole, stallId).catch(() => []);
 
     return NextResponse.json({ success: true, allocations });
   } catch (error: any) {

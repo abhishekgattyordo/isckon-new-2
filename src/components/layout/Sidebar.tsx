@@ -1,7 +1,7 @@
 import React from 'react';
 import { useERP } from '../../context/ERPContext';
 import { ModuleType } from '../../types';
-import { canAccessModule, isSuperAdmin } from '../../lib/authUtils';
+import { canAccessModule, isSuperAdmin, isEventStaff } from '../../lib/authUtils';
 import {
   LayoutDashboard,
   Package,
@@ -184,8 +184,10 @@ export const Sidebar: React.FC = () => {
         <div className="flex-1 overflow-y-auto px-4 py-3 scrollbar-thin scrollbar-thumb-slate-200">
           {NAV_GROUPS.map((group, groupIdx) => {
             const allowedItems = group.items.filter(item => {
-              // Ensure core operational items (products, suppliers) are visible for staff
-              if (item.id === 'suppliers' || item.id === 'products') return true;
+              // If user is Event Staff / Stall Manager, strictly only display Sales Events & Stalls and POS Checkout
+              if (isEventStaff(user) || user?.role === 'Event Staff / Stall Manager') {
+                return (item.id === 'events' || item.id === 'pos') && canAccessModule(user, item.id);
+              }
               return canAccessModule(user, item.id);
             });
             if (allowedItems.length === 0) return null;

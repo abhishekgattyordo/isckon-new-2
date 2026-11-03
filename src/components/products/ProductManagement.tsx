@@ -808,7 +808,7 @@ export const ProductManagement: React.FC = () => {
                         </td>
                         <td className="p-4 sm:p-5 border-r border-b border-[#E5E7EB] dark:border-slate-800 text-slate-600 dark:text-slate-400">
                           <div className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate" title={prod.warehouseZone}>
-                            {prod.warehouseZone.split('—')[0]}
+                            {(prod.warehouseZone || '').split('—')[0] || prod.warehouseZone || 'Main Floor'}
                           </div>
                           <div className="text-[10px] text-slate-400 mt-0.5 truncate">Batch: {effectiveBatchNo}</div>
                         </td>
@@ -912,7 +912,7 @@ export const ProductManagement: React.FC = () => {
                         </span>
                       </div>
                       <span className="text-[10px] text-slate-400 text-right">
-                        {prod.warehouseZone.split('—')[0]}
+                        {(prod.warehouseZone || '').split('—')[0] || prod.warehouseZone || 'Main Floor'}
                       </span>
                     </div>
                   </div>

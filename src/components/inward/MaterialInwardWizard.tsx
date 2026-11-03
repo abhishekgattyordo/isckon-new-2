@@ -693,10 +693,10 @@ export const MaterialInwardWizard: React.FC = () => {
               </div>
               <div className="mt-3 truncate">
                 <span className="text-sm font-bold font-mono text-slate-900 dark:text-white truncate block">
-                  {selectedZone.split('—')[0]}
+                  {(selectedZone || '').split('—')[0] || selectedZone || 'Default Zone'}
                 </span>
                 <span className="text-[10px] text-slate-400 font-mono truncate block">
-                  {selectedZone.split('—')[1] || 'Retail Floor'}
+                  {(selectedZone || '').split('—')[1] || 'Retail Floor'}
                 </span>
               </div>
             </div>
@@ -1197,7 +1197,7 @@ export const MaterialInwardWizard: React.FC = () => {
               <div className="max-w-md mx-auto p-5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-left space-y-3 text-xs font-mono">
                 <div className="flex justify-between border-b border-slate-200 dark:border-slate-800 pb-2 font-bold text-slate-800 dark:text-slate-200">
                   <span>Destination Zone:</span>
-                  <span className="text-slate-900 dark:text-white">{selectedZone.split('—')[0]}</span>
+                  <span className="text-slate-900 dark:text-white">{(selectedZone || '').split('—')[0] || selectedZone || 'Default Zone'}</span>
                 </div>
                 <div className="flex justify-between text-slate-600 dark:text-slate-400">
                   <span>Total Units Added:</span>

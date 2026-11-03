@@ -303,6 +303,7 @@ export type UserRole =
   | 'Branch Admin'
   | 'Store Manager'
   | 'Store Executive'
+  | 'Event Staff / Stall Manager'
   | 'Warehouse Manager'
   | 'Lead Cashier'
   | 'Cashier'
