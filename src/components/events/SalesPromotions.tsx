@@ -42,7 +42,7 @@ import {
   ShieldCheck,
   ShieldAlert
 } from 'lucide-react';
-import { isSuperAdmin } from '../../lib/authUtils';
+import { isSuperAdmin, isEventStaff } from '../../lib/authUtils';
 import {
   exportEventToExcel,
   exportEventToPdf,
@@ -166,6 +166,29 @@ export const SalesPromotions: React.FC = () => {
       s => s.managerEmail && s.managerEmail.trim().toLowerCase() === userEmail
     );
   }, [stallsInEvent, userEmail]);
+
+  const isStaffOnly = user?.role === 'Event Staff / Stall Manager' || isEventStaff(user);
+
+  useEffect(() => {
+    if (isStaffOnly && workspaceSubTab === 'inventory') {
+      setWorkspaceSubTab('dashboard');
+    }
+  }, [isStaffOnly, workspaceSubTab]);
+
+  // Filtered Events Directory for non-admin event staff / stall managers
+  const directoryEvents = useMemo(() => {
+    if (!events) return [];
+    if (!isStaffOnly || isSuper) {
+      return events;
+    }
+    return events.filter(event => {
+      if (!event) return false;
+      const stalls = event.stalls || [];
+      const hasStallEmail = stalls.some(s => s.managerEmail && s.managerEmail.trim().toLowerCase() === userEmail);
+      const hasManagerName = event.managerName && user?.name && event.managerName.toLowerCase().includes(user.name.toLowerCase());
+      return hasStallEmail || hasManagerName;
+    });
+  }, [events, isStaffOnly, isSuper, user, userEmail]);
 
   // Active Stall ID for POS & Ledger
   // Admins can toggle between 'all' and any specific stall.
@@ -394,6 +417,10 @@ export const SalesPromotions: React.FC = () => {
   // Add inventory allocation handler
   const handleAllocateInventory = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isStaffOnly) {
+      quickNotification('Unauthorized', 'Event Staff / Stall Managers cannot allocate central inventory.', 'alert');
+      return;
+    }
     const targetEventId = selectedEvent?.id || selectedEventId;
     if (!targetEventId) {
       quickNotification('Selection Error', 'Please select or activate an event first.', 'alert');
@@ -987,49 +1014,51 @@ export const SalesPromotions: React.FC = () => {
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
               <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Active Events</span>
               <p className="text-xl font-bold font-mono text-emerald-600 mt-1">
-                {events?.filter(e => e?.status === 'active').length || 0}
+                {directoryEvents?.filter(e => e?.status === 'active').length || 0}
               </p>
             </div>
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
               <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Upcoming Events</span>
               <p className="text-xl font-bold font-mono text-amber-500 mt-1">
-                {events?.filter(e => e?.status === 'upcoming').length || 0}
+                {directoryEvents?.filter(e => e?.status === 'upcoming').length || 0}
               </p>
             </div>
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
               <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Completed</span>
               <p className="text-xl font-bold font-mono text-slate-600 dark:text-slate-400 mt-1">
-                {events?.filter(e => e?.status === 'ended').length || 0}
+                {directoryEvents?.filter(e => e?.status === 'ended').length || 0}
               </p>
             </div>
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
               <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Total Event Sales</span>
               <p className="text-xl font-bold font-mono text-amber-600 mt-1">
-                ₹{(events || []).reduce((sum, e) => sum + (e?.currentRevenue || 0), 0).toLocaleString('en-IN')}
+                ₹{(directoryEvents || []).reduce((sum, e) => sum + (e?.currentRevenue || 0), 0).toLocaleString('en-IN')}
               </p>
             </div>
           </div>
 
           {/* Events List Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {(!events || events.length === 0) ? (
+            {(!directoryEvents || directoryEvents.length === 0) ? (
               <div className="col-span-full p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
                 <div className="w-12 h-12 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center mx-auto">
                   <Sparkles className="w-6 h-6" />
                 </div>
-                <h3 className="font-bold text-base text-slate-900 dark:text-white">No Sales Events Scheduled</h3>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">No Assigned Sales Events</h3>
                 <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  No sales events or stalls are currently registered for this branch. Click below to register your first event.
+                  {canAdminOverride ? 'No sales events or stalls are currently registered for this branch.' : 'You are not currently assigned as a stall manager to any active sales events.'}
                 </p>
-                <button
-                  onClick={() => setIsCreating(true)}
-                  className="mt-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs"
-                >
-                  Create New Event
-                </button>
+                {canAdminOverride && (
+                  <button
+                    onClick={() => setIsCreating(true)}
+                    className="mt-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs"
+                  >
+                    Create New Event
+                  </button>
+                )}
               </div>
             ) : (
-              (events || []).map(event => {
+              directoryEvents.map(event => {
                 if (!event) return null;
                 const eventSales = (allocations || []).filter(a => a?.eventId === event?.id);
                 const totalItemsAllocated = eventSales.reduce((sum, a) => sum + (a?.allocatedQty || 0), 0);
@@ -1560,7 +1589,9 @@ export const SalesPromotions: React.FC = () => {
               { id: 'inventory', label: 'Allocated Inventory', icon: Boxes },
               { id: 'pos', label: 'Event POS checkout', icon: ShoppingCart, badge: selectedEvent?.status === 'active' ? 'Live' : null },
               { id: 'reports', label: 'Reports & Reconciliation', icon: FileSpreadsheet }
-            ].map(tab => {
+            ]
+            .filter(tab => !(isStaffOnly && tab.id === 'inventory'))
+            .map(tab => {
               const Icon = tab.icon;
               const isSubActive = workspaceSubTab === tab.id;
               return (
