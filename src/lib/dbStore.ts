@@ -1,4 +1,4 @@
-import { Branch, Product, MaterialInwardNote, POSOrder, SalesEvent, SystemSettings, AuditLog, StockMovement, SalesTag, UserProfile, WarehouseZone, EventAllocation, EventTransaction, InventoryBatch } from '../types';
+import { Branch, Product, MaterialInwardNote, POSOrder, SalesEvent, SystemSettings, AuditLog, StockMovement, SalesTag, UserProfile, WarehouseZone, EventAllocation, EventTransaction, InventoryBatch, CategoryItem } from '../types';
 
 // Central in-memory DB store for Next.js API Routes fallback
 export class MemoryDb {
@@ -17,4 +17,5 @@ export class MemoryDb {
   static eventTransactions: EventTransaction[] = [];
   static barcodeRecords: any[] = [];
   static batches: InventoryBatch[] = [];
+  static categories: CategoryItem[] = [];
 }

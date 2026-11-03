@@ -142,7 +142,6 @@ export async function getProducts(
       } catch (e) {}
 
       const whereClause: any = includeDeleted ? {} : { isDeleted: false };
-      whereClause.status = { not: 'Pending Stock Receipt' };
       if (branchId && branchId !== '*') {
         whereClause.branchId = branchId;
       }
@@ -289,7 +288,7 @@ export async function getProducts(
       batchNo: batchInfo ? batchInfo.batchNo : (p.batchNo || '')
     };
   });
-  let filtered = includeDeleted ? list : list.filter(p => !p.isDeleted && p.status !== 'Pending Stock Receipt');
+  let filtered = includeDeleted ? list : list.filter(p => !p.isDeleted);
   if (branchId && branchId !== '*') {
     filtered = filtered.filter(p => {
       if (p.branchId === branchId) return true;
@@ -374,12 +373,32 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
     ? prodData.barcode.trim()
     : generateEan13Barcode('890', prodData.sku);
 
+  const initialStock = prodData.stock !== undefined ? Number(prodData.stock) : 0;
+  const minStock = prodData.minStock !== undefined ? Number(prodData.minStock) : 0;
+
+  let computedStatus: any = 'in_stock';
+  if (prodData.status && (prodData.status as string) !== 'Pending Stock Receipt') {
+    computedStatus = prodData.status;
+  } else if (initialStock === 0) {
+    computedStatus = 'out_of_stock';
+  } else if (initialStock <= minStock) {
+    computedStatus = 'low_stock';
+  } else {
+    computedStatus = 'in_stock';
+  }
+
+  const batchTag = prodData.batchNo && prodData.batchNo.trim() !== ''
+    ? prodData.batchNo.trim()
+    : `BAT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
   const newProduct: Product = {
     ...prodData,
     barcode: autoBarcode,
     id: `prod-${Date.now()}`,
-    stock: 0,
-    status: 'Pending Stock Receipt',
+    stock: initialStock,
+    minStock: minStock,
+    status: computedStatus,
+    batchNo: batchTag,
     branchId: prodData.branchId || 'branch-mayapur-hq',
     branchName: prodData.branchName || 'Mayapur HQ Central',
     lastUpdated: new Date().toISOString(),
@@ -396,15 +415,15 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
           category: newProduct.category,
           price: Number(newProduct.price),
           cost: Number(newProduct.cost),
-          stock: 0,
-          minStock: Number(newProduct.minStock),
+          stock: initialStock,
+          minStock: minStock,
           warehouseZone: newProduct.warehouseZone,
-          batchNo: newProduct.batchNo,
-          barcode: newProduct.barcode,
+          batchNo: batchTag,
+          barcode: autoBarcode,
           imageUrl: newProduct.imageUrl,
-          status: 'Pending Stock Receipt',
+          status: computedStatus,
           supplier: newProduct.supplier,
-          rating: Number(newProduct.rating),
+          rating: Number(newProduct.rating || 5),
           description: newProduct.description,
           tags: newProduct.tags || [],
           branchId: newProduct.branchId,
@@ -412,6 +431,26 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
           isDeleted: false,
         },
       });
+
+      // Auto-create initial batch in inventoryBatch table
+      const batchId = `batch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+      await prisma.inventoryBatch.create({
+        data: {
+          id: batchId,
+          sku: newProduct.sku,
+          batchNo: batchTag,
+          receivedDate: new Date().toISOString().slice(0, 10),
+          costPrice: Number(newProduct.cost) || 0,
+          sellingPrice: Number(newProduct.price) || 0,
+          totalQuantity: initialStock,
+          remainingQuantity: initialStock,
+          status: initialStock > 0 ? 'in_stock' : 'out_of_stock',
+          branchId: newProduct.branchId,
+          branchName: newProduct.branchName,
+          createdAt: new Date(),
+        }
+      }).catch(e => console.warn('Could not auto-create initial inventoryBatch in DB:', e));
+
       if (newProduct.barcode) {
         await prisma.barcodeRecord.create({
           data: {
@@ -419,7 +458,7 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
             sku: newProduct.sku,
             productName: newProduct.name,
             barcodeValue: newProduct.barcode,
-            batchNo: newProduct.batchNo || null,
+            batchNo: batchTag,
             format: 'code128',
             template: 'retail_tag_1x2',
             generatedAt: new Date().toISOString(),
@@ -440,8 +479,8 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
         stock: dbProd.stock,
         minStock: dbProd.minStock,
         warehouseZone: dbProd.warehouseZone,
-        batchNo: dbProd.batchNo || '',
-        barcode: dbProd.barcode || '',
+        batchNo: dbProd.batchNo || batchTag,
+        barcode: dbProd.barcode || autoBarcode,
         imageUrl: dbProd.imageUrl || '',
         status: dbProd.status as any,
         lastUpdated: dbProd.lastUpdated ? dbProd.lastUpdated.toISOString() : new Date().toISOString(),
@@ -464,7 +503,7 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
       sku: newProduct.sku,
       productName: newProduct.name,
       barcodeValue: newProduct.barcode,
-      batchNo: newProduct.batchNo || null,
+      batchNo: batchTag,
       format: 'code128',
       template: 'retail_tag_1x2',
       generatedAt: new Date().toISOString(),
@@ -475,6 +514,20 @@ export async function createProduct(prodData: Omit<Product, 'id' | 'lastUpdated'
       sellingPrice: Number(newProduct.price) || null,
     });
   }
+
+  MemoryDb.batches.unshift({
+    id: `batch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    sku: newProduct.sku,
+    batchNo: batchTag,
+    receivedDate: new Date().toISOString().slice(0, 10),
+    costPrice: Number(newProduct.cost) || 0,
+    sellingPrice: Number(newProduct.price) || 0,
+    totalQuantity: initialStock,
+    remainingQuantity: initialStock,
+    status: initialStock > 0 ? 'in_stock' : 'out_of_stock',
+    branchId: newProduct.branchId,
+    branchName: newProduct.branchName,
+  });
 
   MemoryDb.products.unshift(newProduct);
   return newProduct;

@@ -109,7 +109,7 @@ export async function getDeletedEvents(): Promise<SalesEvent[]> {
 export async function createEvent(evtData: Omit<SalesEvent, 'id' | 'currentRevenue'> & { id?: string; currentRevenue?: number }): Promise<SalesEvent> {
   const newEvent: SalesEvent = {
     ...evtData,
-    id: evtData.id || `evt-${Date.now()}`,
+    id: evtData.id || `evt-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
     type: (evtData.type || 'stall_booth') as any,
     status: (evtData.status || 'upcoming') as any,
     currentRevenue: Number(evtData.currentRevenue || 0),
@@ -119,8 +119,31 @@ export async function createEvent(evtData: Omit<SalesEvent, 'id' | 'currentReven
 
   try {
     if (process.env.DATABASE_URL) {
-      const dbEvent = await prisma.salesEvent.create({
-        data: {
+      const dbEvent = await prisma.salesEvent.upsert({
+        where: { id: newEvent.id },
+        update: {
+          name: newEvent.name,
+          type: newEvent.type || 'stall_booth',
+          startDate: newEvent.startDate,
+          endDate: newEvent.endDate,
+          status: newEvent.status || 'upcoming',
+          targetRevenue: Number(newEvent.targetRevenue || 0),
+          currentRevenue: Number(newEvent.currentRevenue || 0),
+          allocatedSKUs: Number(newEvent.allocatedSKUs || 0),
+          discountRule: newEvent.discountRule,
+          description: newEvent.description,
+          bannerColor: newEvent.bannerColor,
+          stallLocation: newEvent.stallLocation,
+          managerName: newEvent.managerName,
+          branchId: newEvent.branchId,
+          branchName: newEvent.branchName,
+          booksSoldQty: newEvent.booksSoldQty,
+          booksSoldRevenue: newEvent.booksSoldRevenue,
+          giftsSoldQty: newEvent.giftsSoldQty,
+          giftsSoldRevenue: newEvent.giftsSoldRevenue,
+          isDeleted: false,
+        },
+        create: {
           id: newEvent.id,
           name: newEvent.name,
           type: newEvent.type || 'stall_booth',

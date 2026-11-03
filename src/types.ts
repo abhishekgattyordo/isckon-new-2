@@ -17,6 +17,15 @@ export type ModuleType =
 
 export type SupplierPaymentTerms = 'Net 15' | 'Net 30' | 'Net 45' | 'Net 60' | 'Advance' | 'COD';
 
+export interface CategoryItem {
+  id: string;
+  name: string;
+  description?: string;
+  branchId?: string;
+  branchName?: string;
+  createdAt?: string;
+}
+
 export interface Supplier {
   id: string;
   code: string;

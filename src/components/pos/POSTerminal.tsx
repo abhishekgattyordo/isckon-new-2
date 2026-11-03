@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useERP } from '../../context/ERPContext';
 import { POSOrder, SalesTag, Product, EventStall } from '../../types';
-import { getEffectiveProductPrice, getEffectiveBatchNo } from '../../lib/warehouseUtils';
+import { getEffectiveProductPrice, getEffectiveBatchNo, getMultiBatchInfo } from '../../lib/warehouseUtils';
 import { isSuperAdmin } from '../../lib/authUtils';
 import { BarcodeView } from '../barcode/BarcodeView';
 import { motion, AnimatePresence } from 'motion/react';
@@ -47,7 +47,8 @@ import {
   Lock,
   Unlock,
   ShieldAlert,
-  RefreshCw
+  RefreshCw,
+  Eye
 } from 'lucide-react';
 
 // Dynamic sales tags are loaded from ERPContext
@@ -158,6 +159,7 @@ export const POSTerminal: React.FC = () => {
   }, [salesTags]);
 
   // Modals & Scanners
+  const [showOutOfStock, setShowOutOfStock] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [scannerTab, setScannerTab] = useState<'camera' | 'upload' | 'manual'>('camera');
@@ -271,7 +273,7 @@ export const POSTerminal: React.FC = () => {
                           (p.sku || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
                           (p.barcode || '').includes(searchQuery);
     const matchesCat = selectedCategory === 'All' || p.category === selectedCategory;
-    return matchesSearch && matchesCat && p.stock > 0;
+    return matchesSearch && matchesCat && (showOutOfStock ? true : p.stock > 0);
   });
 
   // Calculations
@@ -1374,34 +1376,50 @@ export const POSTerminal: React.FC = () => {
                 />
               </div>
 
-              {/* View Mode Switcher */}
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 self-start sm:self-auto">
+              {/* View Mode & Stock Toggle Switcher */}
+              <div className="flex items-center gap-1.5 shrink-0 self-start sm:self-auto">
                 <button
                   type="button"
-                  onClick={() => handleSetViewMode('grid')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    viewMode === 'grid'
-                      ? 'bg-white dark:bg-slate-900 text-[#D97706] dark:text-amber-400 shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  onClick={() => setShowOutOfStock(!showOutOfStock)}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                    showOutOfStock
+                      ? 'bg-amber-50 dark:bg-amber-950/40 text-[#D97706] border-amber-300 dark:border-amber-800'
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
                   }`}
-                  title="Grid View"
+                  title="Toggle Out-of-Stock Items"
                 >
-                  <LayoutGrid className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Grid</span>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Show Out-of-Stock</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleSetViewMode('list')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    viewMode === 'list'
-                      ? 'bg-white dark:bg-slate-900 text-[#D97706] dark:text-amber-400 shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                  title="List View"
-                >
-                  <List className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">List</span>
-                </button>
+
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => handleSetViewMode('grid')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      viewMode === 'grid'
+                        ? 'bg-white dark:bg-slate-900 text-[#D97706] dark:text-amber-400 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                    title="Grid View"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Grid</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetViewMode('list')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      viewMode === 'list'
+                        ? 'bg-white dark:bg-slate-900 text-[#D97706] dark:text-amber-400 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                    title="List View"
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">List</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1435,6 +1453,7 @@ export const POSTerminal: React.FC = () => {
               {filteredProducts.map((product, pIdx) => {
                 const effectivePrice = getEffectiveProductPrice(product, batches);
                 const effectiveBatchNo = getEffectiveBatchNo(product, batches);
+                const batchInfo = getMultiBatchInfo(product.sku, batches);
                 const discountedPrice = activeTag && activeTag.discount > 0
                   ? effectivePrice * (1 - activeTag.discount / 100)
                   : effectivePrice;
@@ -1477,6 +1496,18 @@ export const POSTerminal: React.FC = () => {
                           <Barcode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                           <span className="truncate font-semibold">{product.barcode}</span>
                         </div>
+
+                        {batchInfo.count > 1 && batchInfo.nextBatch && (
+                          <div className="mt-1.5 px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/80 text-[10px] font-mono text-indigo-700 dark:text-indigo-300 flex items-center justify-between gap-1 shadow-2xs">
+                            <span className="font-bold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse shrink-0"></span>
+                              {batchInfo.count} Batches
+                            </span>
+                            <span className="font-semibold text-indigo-900 dark:text-indigo-200">
+                              Next: {settings.currencySymbol}{Number(batchInfo.nextBatch.sellingPrice).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
                       </div>
                       <div className="pt-2.5 mt-2 border-t border-[#E8E2D9] dark:border-slate-800 flex items-center justify-between">
                         <div>
@@ -1513,6 +1544,7 @@ export const POSTerminal: React.FC = () => {
               {filteredProducts.map((product, pIdx) => {
                 const effectivePrice = getEffectiveProductPrice(product, batches);
                 const effectiveBatchNo = getEffectiveBatchNo(product, batches);
+                const batchInfo = getMultiBatchInfo(product.sku, batches);
                 const discountedPrice = activeTag && activeTag.discount > 0
                   ? effectivePrice * (1 - activeTag.discount / 100)
                   : effectivePrice;
@@ -1551,7 +1583,7 @@ export const POSTerminal: React.FC = () => {
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-3 mt-1 text-[11px] text-[#786C65] dark:text-slate-400 font-mono flex-wrap">
+                        <div className="flex items-center gap-2.5 mt-1 text-[11px] text-[#786C65] dark:text-slate-400 font-mono flex-wrap">
                           <span className="font-semibold text-slate-700 dark:text-slate-300">SKU: {product.sku}</span>
                           <span className="flex items-center gap-1">
                             <Barcode className="w-3.5 h-3.5 text-slate-400" />
@@ -1563,6 +1595,11 @@ export const POSTerminal: React.FC = () => {
                           <span className={`font-semibold ${product.stock <= 5 ? 'text-rose-600' : 'text-emerald-600'}`}>
                             {product.stallAllocation ? `Stall Allocated: ${product.stock} left (of ${product.stallAllocation.allocatedQty})` : `${product.stock} in stock`}
                           </span>
+                          {batchInfo.count > 1 && batchInfo.nextBatch && (
+                            <span className="text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono">
+                              ⚡ Next batch: {settings.currencySymbol}{Number(batchInfo.nextBatch.sellingPrice).toFixed(2)} (after {batchInfo.currentBatch?.remainingQuantity ?? 0} units @ {settings.currencySymbol}{Number(batchInfo.currentBatch?.sellingPrice ?? 0).toFixed(2)})
+                            </span>
+                          )}
                           {product.stallAllocation && (
                             <span className="text-amber-900 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
                               📍 {product.stallAllocation.stallName || 'Assigned Stall'}

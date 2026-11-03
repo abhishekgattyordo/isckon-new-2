@@ -133,9 +133,17 @@ export function calculateZoneStats(
  * Uses receivedDate ascending with stable secondary sort on id/batchNo.
  */
 export function getActiveBatch(sku: string, batches: InventoryBatch[]): InventoryBatch | undefined {
-  if (!sku || !batches || !Array.isArray(batches)) return undefined;
+  const activeBatches = getAllActiveBatches(sku, batches);
+  return activeBatches[0];
+}
+
+/**
+ * Returns all active inventory batches with remainingQuantity > 0 for a given SKU in FIFO order.
+ */
+export function getAllActiveBatches(sku: string, batches: InventoryBatch[]): InventoryBatch[] {
+  if (!sku || !batches || !Array.isArray(batches)) return [];
   const normSku = sku.trim().toUpperCase();
-  const activeBatches = batches
+  return batches
     .filter(b => b.sku && b.sku.trim().toUpperCase() === normSku && Number(b.remainingQuantity) > 0)
     .sort((a, b) => {
       const dateA = a.receivedDate || '';
@@ -146,7 +154,24 @@ export function getActiveBatch(sku: string, batches: InventoryBatch[]): Inventor
       if (cA && cB && cA !== cB) return cA.localeCompare(cB);
       return (a.id || a.batchNo || '').localeCompare(b.id || b.batchNo || '');
     });
-  return activeBatches[0];
+}
+
+/**
+ * Returns summary info about multi-batch queue for POS display.
+ */
+export function getMultiBatchInfo(sku: string, batches: InventoryBatch[]): {
+  count: number;
+  currentBatch?: InventoryBatch;
+  nextBatch?: InventoryBatch;
+  allBatches: InventoryBatch[];
+} {
+  const activeList = getAllActiveBatches(sku, batches);
+  return {
+    count: activeList.length,
+    currentBatch: activeList[0],
+    nextBatch: activeList[1],
+    allBatches: activeList,
+  };
 }
 
 /**

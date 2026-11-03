@@ -23,7 +23,8 @@ import {
   Supplier,
   InwardItem,
   EventAllocation,
-  EventStall
+  EventStall,
+  CategoryItem
 } from '../types';
 import {
   INITIAL_BRANCHES,
@@ -61,6 +62,8 @@ interface ERPContextType {
   addProduct: (product: Omit<Product, 'id'>) => void;
   updateProduct: (id: string, updates: Partial<Product>) => void;
   deleteProduct: (id: string) => void;
+  categories: CategoryItem[];
+  addCategory: (data: Partial<CategoryItem>) => Promise<CategoryItem>;
   inwardNotes: MaterialInwardNote[];
   addInwardNote: (note: Omit<MaterialInwardNote, 'id'>) => Promise<void> | void;
   updateInwardNote: (id: string, updates: Partial<MaterialInwardNote>) => Promise<void>;
@@ -650,6 +653,57 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [batches, isDbMode]);
 
   const [recycleBinItems, setRecycleBinItems] = useState<RecycleBinItem[]>([]);
+
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
+
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch('/api/categories').then(r => r.json());
+      if (res.success && Array.isArray(res.categories)) {
+        setCategories(res.categories);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch categories:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
+
+  const addCategory = async (data: Partial<CategoryItem>): Promise<CategoryItem> => {
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      const json = await res.json();
+      if (json.success && json.category) {
+        setCategories(prev => {
+          if (prev.some(c => c.name.toLowerCase() === json.category.name.toLowerCase())) {
+            return prev;
+          }
+          return [...prev, json.category];
+        });
+        quickNotification('Category Saved', `New category "${json.category.name}" saved permanently to master catalog.`, 'success');
+        return json.category;
+      }
+    } catch (err) {
+      console.error('Error adding category:', err);
+    }
+    const fallbackCat: CategoryItem = {
+      id: `cat-${Date.now()}`,
+      name: data.name || 'New Category',
+      description: data.description,
+      branchId: data.branchId,
+      branchName: data.branchName,
+      createdAt: new Date().toISOString()
+    };
+    setCategories(prev => [...prev, fallbackCat]);
+    quickNotification('Category Saved', `Category "${fallbackCat.name}" added to catalog.`, 'success');
+    return fallbackCat;
+  };
 
   const fetchRecycleBin = async () => {
     try {
@@ -1397,7 +1451,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotifications(prev => [newNotif, ...prev]);
   };
 
-  const addProduct = (prodData: Omit<Product, 'id'>) => {
+  const addProduct = async (prodData: Omit<Product, 'id'>) => {
     const normSku = (prodData.sku || '').trim().toUpperCase();
     const existing = allProducts.find(p => (p.sku || '').trim().toUpperCase() === normSku);
     if (existing) {
@@ -1410,17 +1464,54 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? prodData.barcode.trim()
       : generateEan13Barcode('890', prodData.sku);
 
+    const initialStock = prodData.stock !== undefined ? Number(prodData.stock) : 0;
+    const minStock = prodData.minStock !== undefined ? Number(prodData.minStock) : 0;
+    let computedStatus: Product['status'] = 'in_stock';
+    if (prodData.status && (prodData.status as string) !== 'Pending Stock Receipt') {
+      computedStatus = prodData.status as Product['status'];
+    } else if (initialStock === 0) {
+      computedStatus = 'out_of_stock';
+    } else if (initialStock <= minStock) {
+      computedStatus = 'low_stock';
+    } else {
+      computedStatus = 'in_stock';
+    }
+
+    const batchTag = prodData.batchNo && prodData.batchNo.trim() !== ''
+      ? prodData.batchNo.trim()
+      : `BAT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const newProd: Product = {
       ...prodData,
       barcode: autoBarcode,
+      batchNo: batchTag,
+      stock: initialStock,
+      minStock: minStock,
+      status: computedStatus,
       id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       branchId: prodData.branchId || currentBranch?.id || 'branch-mayapur-hq',
-      branchName: prodData.branchName || currentBranch?.name || 'Mayapur HQ Central'
+      branchName: prodData.branchName || currentBranch?.name || 'Mayapur HQ Central',
+      lastUpdated: new Date().toISOString(),
     };
     setAllProducts(prev => {
       const filtered = prev.filter(p => (p.sku || '').trim().toUpperCase() !== normSku);
       return [newProd, ...filtered];
     });
+
+    const newBatch: InventoryBatch = {
+      id: `batch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      sku: newProd.sku,
+      batchNo: batchTag,
+      receivedDate: new Date().toISOString().slice(0, 10),
+      costPrice: Number(newProd.cost) || 0,
+      sellingPrice: Number(newProd.price) || 0,
+      totalQuantity: initialStock,
+      remainingQuantity: initialStock,
+      status: initialStock > 0 ? 'in_stock' : 'out_of_stock',
+      branchId: newProd.branchId,
+      branchName: newProd.branchName,
+    };
+    setBatches(prev => [newBatch, ...prev]);
 
     // Auto-create BarcodeRecord for this newly created product
     const newBarcodeRecord: BarcodeRecord = {
@@ -1428,7 +1519,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sku: newProd.sku,
       productName: newProd.name,
       barcodeValue: autoBarcode,
-      batchNo: newProd.batchNo || 'INITIAL-BATCH',
+      batchNo: batchTag,
       format: 'code128',
       template: 'retail_tag_1x2',
       generatedAt: new Date().toISOString(),
@@ -1447,11 +1538,19 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       body: JSON.stringify(newBarcodeRecord)
     }).catch(e => console.warn('Could not save barcode to server:', e));
 
-    fetch('/api/products', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newProd)
-    }).catch(e => console.warn('Could not save product to database:', e));
+    try {
+      const res = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProd)
+      });
+      const data = await res.json();
+      if (data.success && data.product) {
+        setAllProducts(prev => prev.map(p => (p.sku || '').trim().toUpperCase() === normSku ? { ...p, ...data.product } : p));
+      }
+    } catch (e) {
+      console.warn('Could not save product to database:', e);
+    }
 
     logActivity(
       'Created Product',
@@ -2219,62 +2318,64 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCart(prev => {
-      const targetBatch = requestedBatchId 
-        ? batches.find(b => b.id === requestedBatchId)
-        : getActiveBatch(product.sku, batches);
+      // If cashier explicitly selected/scanned a specific batch ID:
+      if (requestedBatchId) {
+        const targetBatch = batches.find(b => b.id === requestedBatchId);
+        const bId = targetBatch?.id;
+        const bNum = targetBatch?.batchNo || product.batchNo;
+        const bPrice = targetBatch ? targetBatch.sellingPrice : product.price;
+        const bCost = targetBatch ? targetBatch.costPrice : product.cost;
 
-      const bId = targetBatch?.id;
-      const bNum = targetBatch?.batchNo || product.batchNo;
-      const bPrice = targetBatch ? targetBatch.sellingPrice : product.price;
-      const bCost = targetBatch ? targetBatch.costPrice : product.cost;
+        const existingIndex = prev.findIndex(item => 
+          (item.product.sku || '').trim().toUpperCase() === sku &&
+          (
+            (bId && item.batchId === bId) ||
+            (bNum && item.batchNumber === bNum)
+          )
+        );
 
-      const existingIndex = prev.findIndex(item => 
-        (item.product.sku || '').trim().toUpperCase() === sku &&
-        (
-          (bId && item.batchId === bId) ||
-          (bNum && item.batchNumber === bNum) ||
-          (!bId && !bNum && !item.batchId && !item.batchNumber)
-        )
-      );
-
-      let updatedCart = [...prev];
-      if (existingIndex !== -1) {
-        updatedCart[existingIndex] = {
-          ...updatedCart[existingIndex],
-          quantity: updatedCart[existingIndex].quantity + quantity
-        };
-      } else {
-        const batchScopedProduct: Product = {
-          ...product,
-          price: bPrice,
-          cost: bCost,
-          batchNo: bNum
-        };
-        updatedCart.push({
-          product: batchScopedProduct,
-          quantity,
-          discountPercent: 0,
-          batchId: bId,
-          batchNumber: bNum,
-          costPrice: bCost,
-          sellingPrice: bPrice
-        });
-      }
-
-      const map = new Map<string, CartItem>();
-      for (const item of updatedCart) {
-        const itemSku = (item.product?.sku || '').trim().toUpperCase();
-        const batchKey = item.batchId || item.batchNumber || 'default';
-        const key = `${itemSku}__${batchKey}`;
-
-        if (map.has(key)) {
-          const existing = map.get(key)!;
-          existing.quantity += item.quantity;
+        let updatedCart = [...prev];
+        if (existingIndex !== -1) {
+          updatedCart[existingIndex] = {
+            ...updatedCart[existingIndex],
+            quantity: updatedCart[existingIndex].quantity + quantity
+          };
         } else {
-          map.set(key, { ...item });
+          const batchScopedProduct: Product = {
+            ...product,
+            price: bPrice,
+            cost: bCost,
+            batchNo: bNum
+          };
+          updatedCart.push({
+            product: batchScopedProduct,
+            quantity,
+            discountPercent: 0,
+            batchId: bId,
+            batchNumber: bNum,
+            costPrice: bCost,
+            sellingPrice: bPrice
+          });
         }
+        return updatedCart;
       }
-      return Array.from(map.values());
+
+      // Default FIFO multi-batch auto-allocation:
+      const totalNewQuantity = existingTotalInCart + quantity;
+      const fifoAllocations = allocateFifoCartItems(product, totalNewQuantity, batches);
+
+      const newCartItemsForSku: CartItem[] = fifoAllocations.map(alloc => ({
+        product: alloc.batchProduct,
+        quantity: alloc.quantity,
+        discountPercent: 0,
+        batchId: alloc.batchId,
+        batchNumber: alloc.batchNumber,
+        costPrice: alloc.costPrice ?? product.cost,
+        sellingPrice: alloc.sellingPrice
+      }));
+
+      const otherItems = prev.filter(item => (item.product.sku || '').trim().toUpperCase() !== sku);
+      return [...otherItems, ...newCartItemsForSku];
     });
   };
 
@@ -2283,7 +2384,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (batchId) {
         return prev.filter(item => !(item.product.id === productId && item.batchId === batchId));
       }
-      return prev.filter(item => item.product.id !== productId);
+      return prev.filter(item => item.product.id !== productId && item.product.sku !== productId);
     });
   };
 
@@ -2292,8 +2393,19 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       removeFromCart(productId, batchId);
       return;
     }
-    const productObj = products.find(p => p.id === productId);
-    const sku = (productObj?.sku || '').trim().toUpperCase();
+
+    const cartTarget = cart.find(item => item.product.id === productId || item.product.sku === productId || item.batchId === batchId);
+    const productObj = products.find(p => p.id === productId || p.sku === cartTarget?.product.sku) || cartTarget?.product;
+    if (!productObj) return;
+
+    const sku = (productObj.sku || '').trim().toUpperCase();
+
+    // Calculate other batch rows for this SKU if modifying a specific batch row
+    const otherBatchRowsTotal = cart
+      .filter(item => (item.product.sku || '').trim().toUpperCase() === sku && (batchId ? item.batchId !== batchId : item.product.id !== productId))
+      .reduce((sum, item) => sum + item.quantity, 0);
+
+    const totalSkuUnits = otherBatchRowsTotal + quantity;
 
     if (activeStall) {
       const emailNorm = (activeStall.managerEmail || user?.email || '').toLowerCase().trim();
@@ -2304,41 +2416,34 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (stallAlloc) {
         const stallRemaining = Math.max(0, Number(stallAlloc.allocatedQty) - Number(stallAlloc.soldQty || 0) - Number(stallAlloc.damagedQty || 0));
-        if (quantity > stallRemaining) {
-          quickNotification('Stall Allocation Limit', `Cannot exceed remaining stall balance of ${stallRemaining} units for "${productObj?.name || sku}".`, 'warning');
+        if (totalSkuUnits > stallRemaining) {
+          quickNotification('Stall Allocation Limit', `Cannot exceed remaining stall balance of ${stallRemaining} units for "${productObj.name || sku}".`, 'warning');
           return;
         }
       }
     }
 
-    const maxStock = productObj?.stock ?? 999;
-    if (quantity > maxStock) {
+    const maxStock = productObj.stock ?? 999;
+    if (totalSkuUnits > maxStock) {
       quickNotification('Stock Limit Reached', `Cannot exceed available stock of ${maxStock}`, 'warning');
       return;
     }
 
     setCart(prev => {
-      const updated = prev.map(item => {
-        if (item.product.id === productId && (item.batchId === batchId || (!batchId && !item.batchId))) {
-          return { ...item, quantity };
-        }
-        return item;
-      });
+      const fifoAllocations = allocateFifoCartItems(productObj, totalSkuUnits, batches);
 
-      const map = new Map<string, CartItem>();
-      for (const item of updated) {
-        const itemSku = (item.product?.sku || '').trim().toUpperCase();
-        const batchKey = item.batchId || item.batchNumber || 'default';
-        const key = `${itemSku}__${batchKey}`;
+      const newCartItemsForSku: CartItem[] = fifoAllocations.map(alloc => ({
+        product: alloc.batchProduct,
+        quantity: alloc.quantity,
+        discountPercent: 0,
+        batchId: alloc.batchId,
+        batchNumber: alloc.batchNumber,
+        costPrice: alloc.costPrice ?? productObj.cost,
+        sellingPrice: alloc.sellingPrice
+      }));
 
-        if (map.has(key)) {
-          const existing = map.get(key)!;
-          existing.quantity += item.quantity;
-        } else {
-          map.set(key, { ...item });
-        }
-      }
-      return Array.from(map.values());
+      const otherItems = prev.filter(item => (item.product.sku || '').trim().toUpperCase() !== sku);
+      return [...otherItems, ...newCartItemsForSku];
     });
   };
 
@@ -3093,7 +3198,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         restoreItem,
         permanentDeleteItem,
         emptyRecycleBin,
-        isInitialLoading
+        isInitialLoading,
+        categories,
+        addCategory
       }}
     >
       {children}

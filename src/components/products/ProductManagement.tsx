@@ -46,11 +46,18 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
   onChange,
   existingCategories
 }) => {
+  const { addCategory, categories: dbCategories, currentBranch } = useERP();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Quick Category Creation Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatDescription, setNewCatDescription] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -83,9 +90,10 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
       'Puja Essentials',
       'General Merchandise'
     ];
-    const set = new Set([...existingCategories, ...defaultCategories].filter(Boolean));
+    const dbNames = (dbCategories || []).map(c => c.name);
+    const set = new Set([...existingCategories, ...dbNames, ...defaultCategories].filter(Boolean));
     return Array.from(set);
-  }, [existingCategories]);
+  }, [existingCategories, dbCategories]);
 
   // Filter categories by search term
   const filteredCategories = useMemo(() => {
@@ -118,6 +126,38 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
     setSearchTerm('');
   };
 
+  const handleOpenCreateModal = (initialName?: string) => {
+    setNewCatName(initialName || searchTerm || '');
+    setNewCatDescription('');
+    setIsModalOpen(true);
+    setIsOpen(false);
+  };
+
+  const handleCreateCategorySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCatName.trim()) return;
+
+    setIsSubmitting(true);
+    try {
+      const created = await addCategory({
+        name: newCatName.trim(),
+        description: newCatDescription.trim(),
+        branchId: currentBranch?.id,
+        branchName: currentBranch?.name
+      });
+
+      onChange(created.name);
+      setIsModalOpen(false);
+      setNewCatName('');
+      setNewCatDescription('');
+      setSearchTerm('');
+    } catch (err) {
+      console.error('Failed to create category:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!isOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
       setSearchTerm(value || '');
@@ -139,7 +179,7 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
         if (filteredCategories.length > 0 && highlightedIndex >= 0 && highlightedIndex < filteredCategories.length) {
           handleSelect(filteredCategories[highlightedIndex]);
         } else if (searchTerm.trim()) {
-          handleSelect(searchTerm.trim());
+          handleOpenCreateModal(searchTerm.trim());
         }
       } else if (e.key === 'Escape') {
         setIsOpen(false);
@@ -164,26 +204,38 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
             if (!isOpen) setIsOpen(true);
           }}
           onKeyDown={handleKeyDown}
-          className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all"
+          className="w-full pl-9 pr-14 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all"
         />
 
-        {value ? (
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {value && (
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                onChange('');
+                setSearchTerm('');
+                setIsOpen(false);
+              }}
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 cursor-pointer"
+              title="Clear category"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           <button
             type="button"
             onClick={e => {
               e.stopPropagation();
-              onChange('');
-              setSearchTerm('');
-              setIsOpen(false);
+              handleOpenCreateModal();
             }}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 cursor-pointer"
-            title="Clear category"
+            className="p-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 text-indigo-600 dark:text-indigo-400 transition-colors cursor-pointer flex items-center justify-center"
+            title="Create new category permanently"
           >
-            <X className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5" />
           </button>
-        ) : (
-          <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        )}
+        </div>
       </div>
 
       {/* Dropdown Menu */}
@@ -191,12 +243,12 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
         <div className="absolute left-0 top-full mt-1.5 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100">
           <div className="p-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/80 flex items-center justify-between text-[10px] font-mono text-slate-500 uppercase tracking-wider">
             <span>Categories ({filteredCategories.length})</span>
-            <span className="text-[9px] text-slate-400">↑↓ to navigate, ↵ to select</span>
+            <span className="text-[9px] text-slate-400">↑↓ navigate, ↵ select</span>
           </div>
 
           <div
             ref={listRef}
-            className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 p-1"
+            className="max-h-52 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 p-1"
           >
             {filteredCategories.length > 0 ? (
               filteredCategories.map((cat, idx) => {
@@ -226,17 +278,113 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
             ) : (
               <div className="p-3 text-center text-xs text-slate-400">
                 <p>No matching category found for "{searchTerm}"</p>
-                {searchTerm.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => handleSelect(searchTerm.trim())}
-                    className="mt-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer block mx-auto"
-                  >
-                    + Create custom category "{searchTerm.trim()}"
-                  </button>
-                )}
               </div>
             )}
+          </div>
+
+          {/* Permanent Action Footer */}
+          <div className="p-1.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/90">
+            <button
+              type="button"
+              onClick={() => handleOpenCreateModal(searchTerm)}
+              className="w-full py-2 px-3 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs border border-indigo-200/50 dark:border-indigo-800/50"
+            >
+              <Plus className="w-3.5 h-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+              <span>+ Add New Category</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Category Creation Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 dark:bg-black/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-150 p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
+                  <Tag className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">Create New Category</h3>
+                  <p className="text-[11px] text-slate-500">Save new category permanently to database</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Category Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  placeholder="e.g. Eco Lamps & Diyas"
+                  value={newCatName}
+                  onChange={e => setNewCatName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCreateCategorySubmit(e);
+                    }
+                  }}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Description / Notes <span className="text-slate-400 font-normal">(Optional)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Brief summary of items under this category..."
+                  value={newCatDescription}
+                  onChange={e => setNewCatDescription(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Assigned Operating Branch
+                </label>
+                <input
+                  type="text"
+                  disabled
+                  value={currentBranch?.name || 'All Operating Branches'}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 select-none cursor-not-allowed"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateCategorySubmit}
+                  disabled={!newCatName.trim() || isSubmitting}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{isSubmitting ? 'Saving...' : 'Save Category'}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -245,7 +393,7 @@ const CategorySearchDropdown: React.FC<CategorySearchDropdownProps> = ({
 };
 
 export const ProductManagement: React.FC = () => {
-  const { products, addProduct, updateProduct, deleteProduct, zones, quickNotification, batches, currentBranch, suppliers } = useERP();
+  const { products, addProduct, updateProduct, deleteProduct, zones, quickNotification, batches, currentBranch, suppliers, categories: dbCategories, addCategory } = useERP();
   
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [searchQuery, setSearchQuery] = useState('');
@@ -284,9 +432,9 @@ export const ProductManagement: React.FC = () => {
   });
 
   const categories = useMemo(() => {
-    const cats = new Set(products.map(p => p.category));
+    const cats = new Set([...products.map(p => p.category), ...(dbCategories || []).map(c => c.name)]);
     return ['All', ...Array.from(cats)];
-  }, [products]);
+  }, [products, dbCategories]);
 
   const filteredProducts = useMemo(() => {
     const seen = new Set<string>();
