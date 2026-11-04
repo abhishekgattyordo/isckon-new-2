@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useERP } from '../../context/ERPContext';
 import { POSOrder, SalesTag, Product, EventStall } from '../../types';
 import { getEffectiveProductPrice, getEffectiveBatchNo, getMultiBatchInfo } from '../../lib/warehouseUtils';
-import { isSuperAdmin } from '../../lib/authUtils';
+import { isSuperAdmin, isEventStaff } from '../../lib/authUtils';
 import { BarcodeView } from '../barcode/BarcodeView';
 import { motion, AnimatePresence } from 'motion/react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -48,7 +48,8 @@ import {
   Unlock,
   ShieldAlert,
   RefreshCw,
-  Eye
+  Eye,
+  Globe
 } from 'lucide-react';
 
 // Dynamic sales tags are loaded from ERPContext
@@ -188,6 +189,16 @@ export const POSTerminal: React.FC = () => {
   const [scannedQuantity, setScannedQuantity] = useState<number>(1);
   const [productNotFoundBarcode, setProductNotFoundBarcode] = useState<string | null>(null);
 
+  // POS Inventory Scope Mode ('stall' = Stall Manifest Mode, 'full' = Full Store Catalog Mode)
+  const [inventoryScopeMode, setInventoryScopeMode] = useState<'stall' | 'full'>('stall');
+
+  // RBAC Permission Guard: Only Managers/Admins can switch catalog scope mode. Event Staff are strictly locked to 'stall'
+  const canSwitchCatalogMode = React.useMemo(() => {
+    return !isEventStaff(user);
+  }, [user]);
+
+  const activeScopeMode = canSwitchCatalogMode ? inventoryScopeMode : 'stall';
+
   // 1. Session-Based Stall Mapping: Build list of all stalls across events for switching/display
   const availableStalls = React.useMemo(() => {
     const list: (EventStall & { eventName?: string })[] = [];
@@ -225,9 +236,9 @@ export const POSTerminal: React.FC = () => {
     );
   }, [activeStall, allocations, user?.email]);
 
-  // 2. Restricted POS Catalog: Filter items present in the stall manifest (allocated_qty > 0)
+  // 2. Restricted POS Catalog: Filter items present in the stall manifest (or full store catalog if full mode)
   const effectiveCatalog = React.useMemo(() => {
-    if (!activeStall) {
+    if (!activeStall || activeScopeMode === 'full') {
       return products;
     }
 
@@ -263,7 +274,7 @@ export const POSTerminal: React.FC = () => {
           }
         };
       });
-  }, [products, activeStall, stallAllocations]);
+  }, [products, activeStall, stallAllocations, activeScopeMode]);
 
   const categories = ['All', ...Array.from(new Set(effectiveCatalog.map(p => p.category)))];
 
@@ -1114,15 +1125,19 @@ export const POSTerminal: React.FC = () => {
     <div className="space-y-6 max-w-7xl mx-auto font-sans">
       {/* Role-Based Stall Manifest Banner & Session Mapping */}
       {activeStall ? (
-        <div className="p-4 sm:p-5 rounded-2xl bg-linear-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5 dark:from-amber-950/40 dark:via-orange-950/30 dark:to-slate-900 border-2 border-amber-500/40 dark:border-amber-700/60 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="p-4 sm:p-5 rounded-2xl bg-linear-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5 dark:from-amber-950/40 dark:via-orange-950/30 dark:to-slate-900 border-2 border-amber-500/40 dark:border-amber-700/60 shadow-sm flex flex-col xl:flex-row xl:items-center justify-between gap-4">
           <div className="flex items-start sm:items-center gap-3.5">
-            <div className="w-11 h-11 rounded-2xl bg-amber-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <div className={`w-11 h-11 rounded-2xl text-white flex items-center justify-center shrink-0 shadow-xs transition-colors ${
+              activeScopeMode === 'stall' ? 'bg-amber-600' : 'bg-indigo-600'
+            }`}>
               <Store className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-600 text-white font-mono">
-                  📍 Stall Checkout Mode
+                <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full text-white font-mono transition-colors ${
+                  activeScopeMode === 'stall' ? 'bg-amber-600' : 'bg-indigo-600'
+                }`}>
+                  {activeScopeMode === 'stall' ? '📍 STALL CHECKOUT MODE' : '🌐 FULL STORE CATALOG MODE'}
                 </span>
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
                   {activeStall.stallName}
@@ -1132,9 +1147,15 @@ export const POSTerminal: React.FC = () => {
                     Spot: {activeStall.locationSpot}
                   </span>
                 )}
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
-                  <Lock className="w-3.5 h-3.5" /> Manifest Locked ({filteredProducts.length} Products Active)
-                </span>
+                {activeScopeMode === 'stall' ? (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
+                    <Lock className="w-3.5 h-3.5" /> Manifest Locked ({filteredProducts.length} Products Active)
+                  </span>
+                ) : (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 font-bold border border-indigo-300 dark:border-indigo-800 flex items-center gap-1">
+                    <Globe className="w-3.5 h-3.5" /> Full Store Unlocked ({filteredProducts.length} Products Active)
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
                 <span>Stall Manager: <strong className="text-slate-900 dark:text-slate-200">{activeStall.managerName}</strong></span>
@@ -1147,17 +1168,52 @@ export const POSTerminal: React.FC = () => {
                   </>
                 )}
                 <span>•</span>
-                <span className="text-amber-900 dark:text-amber-300 font-medium bg-amber-100/70 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">
-                  POS strictly filtered to assigned stock manifest
-                </span>
+                {activeScopeMode === 'stall' ? (
+                  <span className="text-amber-900 dark:text-amber-300 font-medium bg-amber-100/70 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">
+                    POS strictly filtered to assigned stock manifest
+                  </span>
+                ) : (
+                  <span className="text-indigo-900 dark:text-indigo-300 font-semibold bg-indigo-100/80 dark:bg-indigo-900/50 px-1.5 py-0.5 rounded">
+                    POS viewing full central branch inventory catalog
+                  </span>
+                )}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-3 flex-wrap shrink-0">
+            {/* Interactive Mode Toggle Switch (Managers & Admins only) */}
+            {canSwitchCatalogMode && (
+              <div className="flex items-center gap-1 p-1 bg-white/90 dark:bg-slate-900/90 rounded-xl border border-amber-300/80 dark:border-amber-700/80 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setInventoryScopeMode('stall')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeScopeMode === 'stall'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-amber-100/60 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                  <span>Stall Manifest Mode</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInventoryScopeMode('full')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeScopeMode === 'full'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-indigo-100/60 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5 shrink-0" />
+                  <span>Full Store Catalog Mode</span>
+                </button>
+              </div>
+            )}
+
             {isSuperAdmin(user) ? (
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Admin Switcher:</span>
                 <select
                   value={activeStall.id}
                   onChange={(e) => {
@@ -1204,11 +1260,7 @@ export const POSTerminal: React.FC = () => {
                   ))}
                 </select>
               </div>
-            ) : (
-              <div className="px-3 py-1.5 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-mono text-xs font-bold border border-amber-300 dark:border-amber-800 flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5" /> Manifest Locked
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
       ) : isSuperAdmin(user) && availableStalls.length > 0 ? (
