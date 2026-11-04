@@ -456,7 +456,6 @@ export const Header: React.FC = () => {
                     <span>Branch & System Settings</span>
                   </button>
                 )}
-
               </div>
 
               <div className="p-1.5 border-t border-[#E8E2D9] dark:border-slate-800">
