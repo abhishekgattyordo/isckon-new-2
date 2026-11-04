@@ -457,18 +457,6 @@ export const Header: React.FC = () => {
                   </button>
                 )}
 
-                {!isSuperAdmin(user) && (
-                  <button
-                    onClick={async () => {
-                      setShowProfileMenu(false);
-                      await login('superadmin@aura-retail.org', 'superadmin108', 'all-branches');
-                    }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-50/70 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 font-bold transition-colors cursor-pointer border border-indigo-200/60 dark:border-indigo-800/60"
-                  >
-                    <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                    <span>⚡ Switch to Super Admin</span>
-                  </button>
-                )}
               </div>
 
               <div className="p-1.5 border-t border-[#E8E2D9] dark:border-slate-800">

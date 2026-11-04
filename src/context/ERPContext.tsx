@@ -2930,6 +2930,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return false;
       }
 
+      // Security Guard: Prevent non-superadmin active sessions from unauthorized privilege escalation
+      if (isSuperAdmin(foundUser) && user && !isSuperAdmin(user) && user.id !== foundUser.id && !pass) {
+        quickNotification('Access Denied', 'Privilege escalation blocked. Authorized Super Admin session required.', 'alert');
+        return false;
+      }
+
       // If user wasn't in users state, append them to users
       if (!users.some(u => u.id === foundUser.id || u.email.toLowerCase() === foundUser.email.toLowerCase())) {
         setUsers(prev => {
